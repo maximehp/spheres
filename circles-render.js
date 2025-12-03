@@ -50,31 +50,14 @@ CirclesGame.prototype.drawEllipseArc = function (ctx, cx, cy, rx, ry, startAngle
 };
 
 CirclesGame.prototype.drawUpgradeButtons = function (ctx, cx, cySphere, sphereRadius) {
-    // Bigger buttons, spaced a bit farther from the circle.
     const size = 120;
     const offset = sphereRadius * 1.25;
 
     const positions = [
-        {
-            // top left
-            x: cx - offset - size / 2,
-            y: cySphere - offset - size / 2
-        },
-        {
-            // top right
-            x: cx + offset - size / 2,
-            y: cySphere - offset - size / 2
-        },
-        {
-            // bottom left
-            x: cx - offset - size / 2,
-            y: cySphere + offset - size / 2
-        },
-        {
-            // bottom right
-            x: cx + offset - size / 2,
-            y: cySphere + offset - size / 2
-        }
+        { x: cx - offset - size / 2, y: cySphere - offset - size / 2 }, // TL
+        { x: cx + offset - size / 2, y: cySphere - offset - size / 2 }, // TR
+        { x: cx - offset - size / 2, y: cySphere + offset - size / 2 }, // BL
+        { x: cx + offset - size / 2, y: cySphere + offset - size / 2 }  // BR
     ];
 
     const total = this.totalUnits;
@@ -84,37 +67,53 @@ CirclesGame.prototype.drawUpgradeButtons = function (ctx, cx, cySphere, sphereRa
 
     for (let i = 0; i < 4; i++) {
         const pos = positions[i];
-        const cost = this.getUpgradeCost(i);
-        const affordable = total >= cost;
+
+        // special case: loop /1.5 upgrade
+        let isMax = false;
+        if (i === 1) {
+            const current = this.loopThreshold;
+            const next = Math.ceil(current / 1.5);
+            if (next === current) isMax = true;
+        }
+
+        const cost = isMax ? 0 : this.getUpgradeCost(i);
+        const affordable = !isMax && total >= cost;
         const label = this.getUpgradeLabel(i);
 
         this.upgradeButtons[i] = {
             x: pos.x,
             y: pos.y,
-            size: size
+            size: size,
+            disabled: isMax
         };
 
+        // draw button box
         ctx.beginPath();
         ctx.rect(pos.x, pos.y, size, size);
-        ctx.fillStyle = affordable
-            ? "rgba(15, 20, 40, 0.95)"
-            : "rgba(10, 10, 20, 0.7)";
+        ctx.fillStyle = isMax
+            ? "rgba(60, 60, 60, 0.6)"
+            : affordable
+                ? "rgba(15, 20, 40, 0.95)"
+                : "rgba(10, 10, 20, 0.7)";
         ctx.fill();
 
         ctx.lineWidth = affordable ? 2 : 1;
-        ctx.strokeStyle = affordable
-            ? "rgba(200, 230, 255, 0.95)"
-            : "rgba(120, 140, 170, 0.7)";
+        ctx.strokeStyle = isMax
+            ? "rgba(150,150,150,0.6)"
+            : affordable
+                ? "rgba(200, 230, 255, 0.95)"
+                : "rgba(120, 140, 170, 0.7)";
         ctx.stroke();
 
+        // Label
         ctx.font = "18px 'Blockletter'";
-        ctx.fillStyle = affordable ? "#f6f6ff" : "#a0a0ba";
-
+        ctx.fillStyle = isMax ? "#b0b0b0" : affordable ? "#f6f6ff" : "#a0a0ba";
         const cxBtn = pos.x + size / 2;
         const cyBtn = pos.y + size / 2 - 20;
         ctx.fillText(label, cxBtn, cyBtn);
 
-        const costText = `${cost}`;
+        // Cost or MAX
+        const costText = isMax ? "MAX" : `${cost}`;
         ctx.font = "30px 'Blockletter'";
         ctx.fillText(costText, cxBtn, cyBtn + 40);
     }

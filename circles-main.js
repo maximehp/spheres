@@ -22,6 +22,11 @@ window.addEventListener("DOMContentLoaded", () => {
     const resetBtn = document.getElementById("resetBtn");
     const closeBtn = document.getElementById("closeAbout");
 
+    // Win handler: trigger the win animation
+    game.onWin = function () {
+        game.startWinAnimation();
+    };
+
     aboutBtn.addEventListener("click", () => {
         aboutModal.classList.remove("hidden");
     });
@@ -79,5 +84,6 @@ window.addEventListener("DOMContentLoaded", () => {
     // For console
     window.circlesGame = game;
 });
+
 
 
