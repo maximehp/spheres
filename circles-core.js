@@ -1,0 +1,292 @@
+///////////////////////////////////////////////////////
+// CORE: Ring + CirclesGame (constructor, loop, math)
+///////////////////////////////////////////////////////
+
+class Ring {
+    constructor(level, baseRate) {
+        this.level = level;
+        this.baseRate = baseRate;
+
+        // progress: [0, LOOP_THRESHOLD)
+        // ticks: number of wraps (from base-N representation).
+        this.progress = 0;
+        this.ticks = 0;
+    }
+
+    exists() {
+        // Ring 0 always exists.
+        // Higher rings appear if they have any progress or ticks.
+        return this.level === 0 || this.progress > 0 || this.ticks > 0;
+    }
+}
+
+class CirclesGame {
+    constructor(canvas, infoBox) {
+        this.canvas = canvas;
+        this.ctx = canvas.getContext("2d");
+        this.infoBox = infoBox;
+
+        // Base rate for ring 0.
+        this.baseRates = [
+            10
+        ];
+
+        this.rings = [];
+        this.addRing();    // ring 0
+
+        // Fractional progress of the *bottom* ring toward its next completion.
+        this.rings[0].progress = 0;
+
+        // Total number of *full* completions of ring 0.
+        this.totalUnits = 0;
+
+        this.lastTime = performance.now();
+
+        // Dynamic parameters (upgradable)
+        this.baseLoopThreshold = LOOP_THRESHOLD;
+        this.loopThreshold = LOOP_THRESHOLD;
+
+        this.baseBaseRate = this.baseRates[0];
+
+        this.baseMultScale = 1.0;
+        this.multScale = 1.0;
+
+        // Upgrades: [rate x2, threshold /1.5, mult root *0.9, boost others]
+        this.upgradeLevels = [0, 0, 0, 0];
+        this.upgradeButtons = [null, null, null, null];
+
+        // Win animation state
+        this.winState = {
+            active: false,
+            timer: 0,
+            duration: 4.0
+        };
+
+        // Track the highest ring digit to detect its wrap
+        this.lastTopDigit = null;
+
+        // Default cursor; hover will switch to pointer only over buttons.
+        this.canvas.style.cursor = "default";
+
+        window.addEventListener("resize", () => this.resize());
+        this.resize();
+
+        // Click / hover for upgrades
+        this.canvas.addEventListener("click", (e) => this.handleClick(e));
+        this.canvas.addEventListener("mousemove", (e) => this.handleHover(e));
+
+        requestAnimationFrame((t) => this.loop(t));
+    }
+
+    //////////////////////////////////////////////////////
+    // Ring management
+    //////////////////////////////////////////////////////
+
+    addRing() {
+        const level = this.rings.length;
+        const base =
+            this.baseRates[level] ||
+            this.baseRates[this.baseRates.length - 1] * 0.75;
+
+        this.rings.push(new Ring(level, base));
+    }
+
+    ensureRings(count) {
+        while (this.rings.length < count) {
+            this.addRing();
+        }
+    }
+
+    resetAll() {
+        this.rings = [];
+        this.addRing(); // ring 0 only
+        this.rings[0].progress = 0;
+        this.totalUnits = 0;
+        this.lastTime = performance.now();
+
+        this.loopThreshold = this.baseLoopThreshold;
+        this.multScale = this.baseMultScale;
+        this.upgradeLevels = [0, 0, 0, 0];
+
+        this.winState.active = false;
+        this.winState.timer = 0;
+        this.lastTopDigit = null;
+    }
+
+    startWinAnimation() {
+        this.winState.active = true;
+        this.winState.timer = 0;
+    }
+
+    //////////////////////////////////////////////////////
+    // Integer <-> rings mapping
+    //////////////////////////////////////////////////////
+
+    // Rebuild rings[1..] from the current totalUnits using current loopThreshold.
+    // We do not cap the number of rings here; visually we will only
+    // place the first MAX_SLOTS of them on the sphere.
+    rebuildFromTotal() {
+        this.ensureRings(1);
+
+        let units = this.totalUnits;
+        let level = 1;
+
+        while (units > 0) {
+            this.ensureRings(level + 1);
+            const ring = this.rings[level];
+
+            const digit = units % this.loopThreshold;
+            const carry = Math.floor(units / this.loopThreshold);
+
+            ring.progress = digit;
+            ring.ticks = carry;
+
+            units = carry;
+            level += 1;
+        }
+
+        // Zero out any higher rings beyond the highest used.
+        for (let i = level; i < this.rings.length; i++) {
+            const ring = this.rings[i];
+            ring.progress = 0;
+            ring.ticks = 0;
+        }
+    }
+
+    getTotalUnits() {
+        return this.totalUnits;
+    }
+
+    spend(amount) {
+        amount = Math.floor(Math.max(0, amount));
+        if (amount <= 0) {
+            return false;
+        }
+
+        if (this.totalUnits < amount) {
+            return false;
+        }
+
+        this.totalUnits -= amount;
+        this.rebuildFromTotal();
+        return true;
+    }
+
+    //////////////////////////////////////////////////////
+    // Core loop
+    //////////////////////////////////////////////////////
+
+    loop(t) {
+        const dt = Math.min((t - this.lastTime) / 1000, 0.2);
+        this.lastTime = t;
+
+        this.update(dt);
+        this.draw();
+        this.updateInfo();
+
+        requestAnimationFrame((nt) => this.loop(nt));
+    }
+
+    update(dt) {
+        // If we are in a win animation, advance it and freeze logic.
+        if (this.winState.active) {
+            this.winState.timer += dt;
+            if (this.winState.timer >= this.winState.duration) {
+                this.winState.active = false;
+                this.resetAll();
+            }
+            return;
+        }
+
+        const r0 = this.rings[0];
+
+        // Recompute parameters from upgrades
+        const newThreshold = this.computeLoopThreshold();
+        if (newThreshold !== this.loopThreshold) {
+            const oldThreshold = this.loopThreshold;
+            if (oldThreshold > 0) {
+                const ratio = newThreshold / oldThreshold;
+                r0.progress *= ratio;
+            }
+
+            while (r0.progress >= newThreshold) {
+                r0.progress -= newThreshold;
+                this.totalUnits += 1;
+            }
+
+            this.loopThreshold = newThreshold;
+            this.rebuildFromTotal();
+
+            // Reset tracking so threshold changes do not falsely trigger a win.
+            this.lastTopDigit = null;
+        }
+
+        this.multScale = this.computeMultScale();
+        const baseRate0 = this.computeBaseRate();
+
+        // Multiplier from higher rings based on their *current* progress.
+        // mult_total = Π_{i>=1, ring exists} sqrt( multScale * (progress_i + 1) )
+        let totalMult = 1;
+        for (let i = 1; i < this.rings.length; i++) {
+            const ring = this.rings[i];
+            if (!ring.exists()) {
+                continue;
+            }
+            const term = this.multScale * (ring.progress + 1);
+            totalMult *= Math.sqrt(Math.max(0, term));
+        }
+
+        const speed0 = baseRate0 * totalMult;
+
+        // Advance bottom ring's fractional progress over time.
+        r0.progress += speed0 * dt;
+
+        // Each time it hits the threshold, convert that to +1 totalUnit.
+        while (r0.progress >= this.loopThreshold) {
+            r0.progress -= this.loopThreshold;
+            this.totalUnits += 1;
+        }
+
+        // Now that totalUnits changed, rebuild rings[1..] from it.
+        this.rebuildFromTotal();
+
+        // Win detection based on the 16th ring (index 15) completing a loop.
+        if (this.rings.length >= 12) {
+            const topRing = this.rings[11];
+            const digit = topRing.progress;
+
+            if (this.lastTopDigit !== null &&
+                this.lastTopDigit > 0 &&
+                digit === 0 &&
+                !this.winState.active &&
+                typeof this.onWin === "function") {
+                this.onWin();
+            }
+
+            this.lastTopDigit = digit;
+        } else {
+            this.lastTopDigit = null;
+        }
+    }
+
+    //////////////////////////////////////////////////////
+    // Resize
+    //////////////////////////////////////////////////////
+
+    resize() {
+        // Enforce a minimum logical size so the big buttons are not clipped.
+        const rect = this.canvas.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+
+        const targetWidth = Math.max(rect.width, 820);
+        const targetHeight = Math.max(rect.height, 620);
+
+        this.canvas.style.width = targetWidth + "px";
+        this.canvas.style.height = targetHeight + "px";
+
+        this.canvas.width = targetWidth * dpr;
+        this.canvas.height = targetHeight * dpr;
+
+        this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+}

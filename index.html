@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>Circles</title>
+        <link rel="stylesheet" href="style.css">
+    </head>
+    <body>
+        <div id="background">
+            <div id="overlay">
+                <canvas id="circlesCanvas"></canvas>
+
+                <button id="aboutBtn" class="corner-btn">?</button>
+            </div>
+        </div>
+
+        <!-- ABOUT MODAL -->
+        <div id="aboutModal" class="modal hidden">
+            <div class="modal-content">
+                <h1>About</h1>
+                <p>This project was inspired by<br><strong>Circles by FlameMasterNxf</strong>.</p>
+                <p>Made for an English class in college.</p>
+
+                <button id="resetBtn" class="modal-reset-btn">Reset Progress</button>
+                <button id="closeAbout" class="modal-close-btn">Close</button>
+            </div>
+        </div>
+
+        <!-- Vanta / Three -->
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/vanta@latest/dist/vanta.waves.min.js"></script>
+
+        <script src="circles-config.js"></script>
+        <script src="circles-core.js"></script>
+        <script src="circles-upgrades.js"></script>
+        <script src="circles-render.js"></script>
+        <script src="circles-main.js"></script>
+
+    </body>
+</html>
