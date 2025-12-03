@@ -1,41 +1,103 @@
 <!DOCTYPE html>
 <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <title>Circles</title>
-        <link rel="stylesheet" href="style.css">
-    </head>
-    <body>
-        <div id="background">
-            <div id="overlay">
-                <canvas id="circlesCanvas"></canvas>
+<head>
+    <meta charset="UTF-8">
+    <title>Circles</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="background">
+        <div id="overlay">
+            <canvas id="circlesCanvas"></canvas>
 
-                <button id="aboutBtn" class="corner-btn">?</button>
-            </div>
+            <!-- About button -->
+            <button id="aboutBtn" class="corner-btn">?</button>
+
+            <!-- Music toggle button -->
+            <button id="musicBtn" class="corner-btn music-btn">♫</button>
+
+            <!-- Hidden SoundCloud background music -->
+            <iframe
+                id="scPlayer"
+                class="sc-hidden"
+                width="0"
+                height="0"
+                scrolling="no"
+                frameborder="no"
+                allow="autoplay"
+                src="https://w.soundcloud.com/player/?url=https%3A//soundcloud.com/boo-moo-shoo/my-lofi-collection-1-hour-of-aesthetic-calm-lofi-music-free-no-copyright-music&auto_play=true&hide_related=true&show_comments=false&visual=false&muted=true">
+            </iframe>
         </div>
+    </div>
 
-        <!-- ABOUT MODAL -->
-        <div id="aboutModal" class="modal hidden">
-            <div class="modal-content">
-                <h1>About</h1>
-                <p>This project was inspired by<br><strong>Circles by FlameMasterNxf</strong>.</p>
-                <p>Made for an English class in college.</p>
-                <p>Used Vanta.js for the background and three.js for the sphere rendering</p>
+    <!-- ABOUT MODAL -->
+    <div id="aboutModal" class="modal hidden">
+        <div class="modal-content">
+            <h1>About</h1>
+            <p>This project was inspired by<br><strong>Circles by FlameMasterNxf</strong>.</p>
+            <p>Made for an English class in college.</p>
+            <p>Used Vanta.js for the background and three.js for the sphere rendering.</p>
 
-                <button id="resetBtn" class="modal-reset-btn">Reset Progress</button>
-                <button id="closeAbout" class="modal-close-btn">Close</button>
-            </div>
+            <button id="resetBtn" class="modal-reset-btn">Reset Progress</button>
+            <button id="closeAbout" class="modal-close-btn">Close</button>
         </div>
+    </div>
 
-        <!-- Vanta / Three -->
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/vanta@latest/dist/vanta.waves.min.js"></script>
+    <!-- SoundCloud Widget API -->
+    <script src="https://w.soundcloud.com/player/api.js"></script>
 
-        <script src="circles-config.js"></script>
-        <script src="circles-core.js"></script>
-        <script src="circles-upgrades.js"></script>
-        <script src="circles-render.js"></script>
-        <script src="circles-main.js"></script>
+    <!-- Vanta / Three libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vanta@latest/dist/vanta.waves.min.js"></script>
 
-    </body>
+    <!-- Game scripts -->
+    <script src="circles-config.js"></script>
+    <script src="circles-core.js"></script>
+    <script src="circles-upgrades.js"></script>
+    <script src="circles-render.js"></script>
+    <script src="circles-main.js"></script>
+
+    <!-- Music Control Script -->
+    <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            const iframe = document.getElementById("scPlayer");
+            const musicBtn = document.getElementById("musicBtn");
+
+            const widget = SC.Widget(iframe);
+            let musicOn = false;
+            let initialized = false;
+
+            // Start muted
+            widget.setVolume(0);
+
+            function updateMusicButton() {
+                musicBtn.textContent = musicOn ? "♫" : "♩";
+            }
+
+            // Unmute or mute
+            musicBtn.addEventListener("click", () => {
+                if (!initialized) {
+                    // first user interaction: fully allowed
+                    widget.setVolume(100);
+                    musicOn = true;
+                    initialized = true;
+                    updateMusicButton();
+                    return;
+                }
+
+                if (musicOn) {
+                    widget.setVolume(0);
+                    musicOn = false;
+                } else {
+                    widget.setVolume(100);
+                    musicOn = true;
+                }
+
+                updateMusicButton();
+            });
+
+            updateMusicButton();
+        });
+    </script>
+</body>
 </html>
