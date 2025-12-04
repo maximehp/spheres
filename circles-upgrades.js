@@ -9,6 +9,25 @@ CirclesGame.prototype.getUpgradeCost = function (index) {
     return Math.floor(baseCosts[index] * Math.pow(growth[index], level));
 };
 
+// Format large costs: if >= 10,000,000 show in XeX style (e.g. 3e7),
+// otherwise use normal thousands separators.
+CirclesGame.prototype.formatCost = function (value) {
+    if (value < 10000000) {
+        return value.toLocaleString();
+    }
+
+    const exp = Math.floor(Math.log10(value));
+    let mant = Math.round(value / Math.pow(10, exp) * 100) / 100;
+
+    // In rare cases rounding could give 10eX; normalize that to 1e(X+1)
+    if (mant >= 10) {
+        mant = 1;
+        return mant + "e" + (exp + 1);
+    }
+
+    return mant + "e" + exp;
+};
+
 CirclesGame.prototype.getMetaBoostFactor = function () {
     const metaLevel = this.upgradeLevels[3];
     return 1.0 + 0.20 * metaLevel; // 1.0, 1.2, 1.4, ...
@@ -73,7 +92,6 @@ CirclesGame.prototype.getUpgradeLabel = function (index) {
     return "";
 };
 
-// Detailed info for tooltip
 CirclesGame.prototype.getUpgradeTooltipInfo = function (index) {
     const info = {
         title: "",
@@ -92,19 +110,19 @@ CirclesGame.prototype.getUpgradeTooltipInfo = function (index) {
         const nextFactor = Math.pow(2, (level + 1) * boost);
         const nextRate = base * nextFactor;
 
-        // Convert to "loops per second" style based on current loop threshold
         const currentThreshold = this.computeLoopThresholdForLevel(this.upgradeLevels[1]);
-        const currentLoopsPerSec = currentThreshold > 0
-            ? (currentRate / currentThreshold)
-            : 0;
-        const nextLoopsPerSec = currentThreshold > 0
-            ? (nextRate / currentThreshold)
-            : 0;
+        const currentLoopsPerSec = currentThreshold > 0 ? currentRate / currentThreshold : 0;
+        const nextLoopsPerSec = currentThreshold > 0 ? nextRate / currentThreshold : 0;
 
         info.title = "Base rate x2";
         info.lines.push("Doubles the base loops per second.");
+
+        // insert blank line
+        info.lines.push("");
+
         info.lines.push(`Current base rate : ${currentLoopsPerSec.toFixed(2)} /s`);
         info.lines.push(`Next level : ${nextLoopsPerSec.toFixed(2)} /s`);
+
     } else if (index === 1) {
         // Loop /1.3
         const level = this.upgradeLevels[1];
@@ -116,6 +134,9 @@ CirclesGame.prototype.getUpgradeTooltipInfo = function (index) {
 
         info.title = "Loop threshold /1.3";
         info.lines.push("Reduces loops needed for each wrap.");
+
+        info.lines.push("");
+
         info.lines.push(`Current threshold : ${current}`);
 
         if (isMax) {
@@ -123,21 +144,57 @@ CirclesGame.prototype.getUpgradeTooltipInfo = function (index) {
         } else {
             info.lines.push(`Next level : ${next}`);
         }
+
     } else if (index === 2) {
         // Mult x1.2
-        const scale = this.computeMultScale();
+        const currentScale = this.computeMultScale();
+        const level = this.upgradeLevels[2];
+        const boost = this.getMetaBoostFactor();
+
+        const nextPower = (level + 1) * boost;
+        const nextScaleRaw = Math.pow(1.2, nextPower);
+        const nextScale = Math.max(0.05, nextScaleRaw);
+
         info.title = "Multiplier x1.2";
         info.lines.push("Increases speed bonus from higher rings.");
-        info.lines.push(`Current scale : ${scale.toFixed(3)}`);
+
+        info.lines.push("");
+
+        info.lines.push(`Current scale : x${currentScale.toFixed(2)}`);
+        info.lines.push(`Next level : x${nextScale.toFixed(2)}`);
+
     } else if (index === 3) {
         // Boost others
-        const factor = this.getMetaBoostFactor();
+        const currentFactor = this.getMetaBoostFactor();
+        const nextFactor = currentFactor + 0.20;
+
         info.title = "Boost others";
         info.lines.push("Strengthens all other upgrades.");
-        info.lines.push(`Current boost factor : x${factor.toFixed(2)}`);
+
+        info.lines.push("");
+
+        info.lines.push(`Current boost factor : x${currentFactor.toFixed(2)}`);
+        info.lines.push(`Next level : x${nextFactor.toFixed(2)}`);
     }
 
     return info;
+};
+
+// Snapshot current ring state for smooth spend animation
+CirclesGame.prototype._snapshotRingsForSpendAnim = function () {
+    const ringsSnap = this.rings.map(r => ({
+        exists: r.exists(),
+        progress: r.progress,
+        solid: !!r.solid,
+        multAverage: r.multAverage == null ? null : r.multAverage
+    }));
+
+    return {
+        totalUnits: this.totalUnits,
+        loopThreshold: this.loopThreshold,
+        multScale: this.multScale,
+        rings: ringsSnap
+    };
 };
 
 CirclesGame.prototype.buyUpgrade = function (index) {
@@ -151,6 +208,9 @@ CirclesGame.prototype.buyUpgrade = function (index) {
     if (this.totalUnits < cost) {
         return;
     }
+
+    // Snapshot BEFORE spending for animation "from" state
+    const beforeSnapshot = this._snapshotRingsForSpendAnim();
 
     this.totalUnits -= cost;
     this.upgradeLevels[index] += 1;
@@ -177,6 +237,14 @@ CirclesGame.prototype.buyUpgrade = function (index) {
 
     this.multScale = this.computeMultScale();
     this.rebuildFromTotal();
+
+    // Start spend animation: from "before", toward the live state
+    this.spendAnim = {
+        active: true,
+        t: 0,
+        duration: 0.25,
+        from: beforeSnapshot
+    };
 };
 
 CirclesGame.prototype.handleClick = function (event) {

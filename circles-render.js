@@ -119,7 +119,7 @@ CirclesGame.prototype.drawUpgradeButtons = function (ctx, cx, cySphere, sphereRa
         ctx.fillText(label, cxBtn, cyBtn);
 
         // Cost or MAX
-        const costText = isMax ? "MAX" : `${cost}`;
+        const costText = isMax ? "MAX" : this.formatCost(cost);
         ctx.font = "30px 'Blockletter'";
         ctx.fillText(costText, cxBtn, cyBtn + 40);
     }
@@ -245,7 +245,14 @@ CirclesGame.prototype.drawUpgradeTooltip = function (ctx) {
 
     for (let i = 0; i < info.lines.length; i++) {
         const rawLine = info.lines[i];
-        if (!rawLine) {
+
+        // Treat empty string as a vertical spacer line
+        if (rawLine === "") {
+            lineY += 10;  // extra gap
+            continue;
+        }
+
+        if (rawLine == null) {
             continue;
         }
 
@@ -320,6 +327,48 @@ CirclesGame.prototype.draw = function () {
     const cx = w / 2;
     const cy = h / 2;
 
+    const dt = this.lastDt || 0.016;
+
+    // ==================================
+    // Spend animation: timing + factor f
+    // ==================================
+    let spendAnim = this.spendAnim && this.spendAnim.active ? this.spendAnim : null;
+    let spendF = 0;
+
+    if (spendAnim) {
+        spendAnim.t += dt;
+        if (spendAnim.t >= spendAnim.duration) {
+            spendAnim.t = spendAnim.duration;
+            spendAnim.active = false;
+        }
+        const raw = spendAnim.t / spendAnim.duration;
+        // ease-out curve: f in [0,1]
+        spendF = raw * (2 - raw);
+    } else {
+        this.spendAnim = null;
+    }
+
+    // Display values: blend snapshot "from" -> LIVE state
+    let displayTotalUnits = this.totalUnits;
+    let displayLoopThreshold = this.loopThreshold;
+    let displayMultScale = this.multScale;
+
+    if (spendAnim && spendAnim.from) {
+        const from = spendAnim.from;
+
+        displayTotalUnits =
+            from.totalUnits +
+            (this.totalUnits - from.totalUnits) * spendF;
+
+        displayLoopThreshold =
+            from.loopThreshold +
+            (this.loopThreshold - from.loopThreshold) * spendF;
+
+        displayMultScale =
+            from.multScale +
+            (this.multScale - from.multScale) * spendF;
+    }
+
     // ===========================
     // Top-center total number
     // ===========================
@@ -327,7 +376,7 @@ CirclesGame.prototype.draw = function () {
     ctx.textBaseline = "top";
     ctx.font = '32px "Blockletter"';
 
-    const totalStr = this.totalUnits.toLocaleString();
+    const totalStr = Math.floor(displayTotalUnits).toLocaleString();
 
     ctx.lineWidth = 4;
     ctx.strokeStyle = "rgba(0,0,0,0.65)";
@@ -340,10 +389,15 @@ CirclesGame.prototype.draw = function () {
     const sphereRadius = Math.min(w, h) * 0.32;
     const cySphere = cy + 10;
 
-    // Collect indices of rings that exist.
+    // Collect indices of rings that exist (for animation, treat rings that used to
+    // exist OR currently exist as visible).
     const visibleIndices = [];
+    const fromRings = spendAnim && spendAnim.from ? spendAnim.from.rings : null;
+
     for (let i = 0; i < this.rings.length; i++) {
-        if (this.rings[i].exists()) {
+        const nowExists = this.rings[i].exists();
+        const fromExists = fromRings && fromRings[i] && fromRings[i].exists;
+        if (nowExists || fromExists) {
             visibleIndices.push(i);
         }
     }
@@ -383,28 +437,12 @@ CirclesGame.prototype.draw = function () {
     const solidOnThreshold = 10;  // become solid when >= 10 loops/sec
     const solidOffThreshold = 4;  // stop being solid when <= 4 loops/sec
 
-    // dt for smoothing, default to ~60 FPS if not yet set
-    const dt = this.lastDt || 0.016;
     const smoothingWindow = 1.0;  // about 1 second
     const alpha = Math.min(1, dt / smoothingWindow);
 
     for (let slot = 0; slot < usedSlots; slot++) {
         const ringIndex = visibleIndices[slot];
         const ring = this.rings[ringIndex];
-
-        // Approximate loops/sec for this ring.
-        let ringLoopRate = 0;
-        if (this.loopThreshold > 0) {
-            ringLoopRate = loopRate0 / Math.pow(this.loopThreshold, ringIndex);
-        }
-
-        // Hysteresis: latch solid on at 10, release at 4
-        if (!ring.solid && ringLoopRate >= solidOnThreshold) {
-            ring.solid = true;
-        } else if (ring.solid && ringLoopRate <= solidOffThreshold) {
-            ring.solid = false;
-        }
-        const isSolid = ring.solid;
 
         // t = slot position in [0, MAX_SLOTS-1]
         const t = MAX_SLOTS === 1 ? 0.5 : slot / (MAX_SLOTS - 1);
@@ -427,12 +465,37 @@ CirclesGame.prototype.draw = function () {
         ctx.strokeStyle = "rgba(0,0,0,0.65)";
         this.drawEllipseArc(ctx, cx, centerY, rx, ry, 0, Math.PI * 2);
 
+        // Approximate loops/sec for this ring, use REAL threshold for logic
+        let ringLoopRate = 0;
+        if (this.loopThreshold > 0) {
+            ringLoopRate = loopRate0 / Math.pow(this.loopThreshold, ringIndex);
+        }
+
+        // Hysteresis: latch solid on at 10, release at 4 (on the real state)
+        if (!ring.solid && ringLoopRate >= solidOnThreshold) {
+            ring.solid = true;
+        } else if (ring.solid && ringLoopRate <= solidOffThreshold) {
+            ring.solid = false;
+        }
+        let isSolid = ring.solid;
+
+        // Display progress: blend from snapshot progress -> live progress
+        let displayProgress = ring.progress;
+        if (spendAnim && fromRings && fromRings[ringIndex] && fromRings[ringIndex].exists) {
+            const fromProg = fromRings[ringIndex].progress;
+            displayProgress = fromProg + (ring.progress - fromProg) * spendF;
+            // If the old ring was solid, keep it visually solid during the blend
+            if (fromRings[ringIndex].solid) {
+                isSolid = true;
+            }
+        }
+
         // Progress arc: solid vs fractional
         let frac = 0;
         if (isSolid) {
             frac = 1;
         } else {
-            frac = Math.max(0, Math.min(1, ring.progress / this.loopThreshold));
+            frac = Math.max(0, Math.min(1, displayProgress / displayLoopThreshold));
         }
 
         if (frac > 0) {
@@ -446,14 +509,14 @@ CirclesGame.prototype.draw = function () {
         }
 
         // Multiplier label for higher rings with nonzero progress
-        if (ringIndex > 0 && ring.progress > 0) {
-            // instantaneous multiplier
-            const term = this.multScale * (ring.progress + 1);
+        if (ringIndex > 0 && displayProgress > 0) {
+            const term = displayMultScale * (displayProgress + 1);
             const instMult = Math.sqrt(Math.max(0, term));
 
             let displayMult;
-            if (isSolid) {
-                // For solid rings, smooth over about 1 second using EMA
+
+            if (isSolid && !(spendAnim && fromRings && fromRings[ringIndex])) {
+                // For solid rings without spend animation affecting them, smooth over about 1 second using EMA
                 if (ring.multAverage == null) {
                     ring.multAverage = instMult;
                 } else {
@@ -461,7 +524,7 @@ CirclesGame.prototype.draw = function () {
                 }
                 displayMult = ring.multAverage;
             } else {
-                // For non-solid rings, show the raw multiplier and reset the average
+                // For non-solid or animating rings, show the raw multiplier
                 ring.multAverage = null;
                 displayMult = instMult;
             }
@@ -488,11 +551,11 @@ CirclesGame.prototype.draw = function () {
     // WIN ANIMATION OVERLAY
     // ===========================
     if (this.winState && this.winState.active) {
-        const t = this.winState.timer;
+        const tWin = this.winState.timer;
         const D = this.winState.duration;
 
-        const alphaIn = Math.min(1, t * 2.4);
-        const alphaOut = Math.max(0, 1 - (t - 1.0) / 2.2);
+        const alphaIn = Math.min(1, tWin * 2.4);
+        const alphaOut = Math.max(0, 1 - (tWin - 1.0) / 2.2);
         const alpha = Math.min(alphaIn, alphaOut);
 
         // Brightness wash
@@ -505,7 +568,7 @@ CirclesGame.prototype.draw = function () {
         const baseR = Math.min(w, h) * 0.35;
 
         for (let i = 0; i < 6; i++) {
-            const p = (t * 1.3 + i * 0.15) % 1;
+            const p = (tWin * 1.3 + i * 0.15) % 1;
             const r = baseR + p * baseR * 1.2;
 
             ctx.beginPath();

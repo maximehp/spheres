@@ -70,6 +70,7 @@ body {
   cursor: pointer;
   pointer-events: auto;
   box-shadow: 0 0 12px rgba(0, 0, 0, 0.5);
+  z-index: 1000;
   transition: background 0.12s ease, transform 0.08s ease, box-shadow 0.12s ease;
 }
 
