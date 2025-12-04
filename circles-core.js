@@ -335,21 +335,29 @@ class CirclesGame {
     //////////////////////////////////////////////////////
     // Resize
     //////////////////////////////////////////////////////
-
     resize() {
-        // Enforce a minimum logical size so the big buttons are not clipped.
-        const rect = this.canvas.getBoundingClientRect();
         const dpr = window.devicePixelRatio || 1;
 
-        const targetWidth = Math.max(rect.width, 820);
-        const targetHeight = Math.max(rect.height, 620);
+        // Use the *current* CSS size of the canvas
+        const targetWidth = this.canvas.clientWidth;
+        const targetHeight = this.canvas.clientHeight;
 
-        this.canvas.style.width = targetWidth + "px";
-        this.canvas.style.height = targetHeight + "px";
+        // Do NOT set style.width/height here.
+        // Let CSS "width: 100%; height: 100%" control the layout.
 
-        this.canvas.width = targetWidth * dpr;
-        this.canvas.height = targetHeight * dpr;
+        // Only update the backing buffer if needed
+        const newWidth = targetWidth * dpr;
+        const newHeight = targetHeight * dpr;
 
-        this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        if (this.canvas.width !== newWidth || this.canvas.height !== newHeight) {
+            this.canvas.width = newWidth;
+            this.canvas.height = newHeight;
+
+            // Logical units are CSS pixels
+            this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+            // Clear with logical size
+            this.ctx.clearRect(0, 0, targetWidth, targetHeight);
+        }
     }
 }
