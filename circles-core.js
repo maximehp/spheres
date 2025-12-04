@@ -11,6 +11,10 @@ class Ring {
         // ticks: number of wraps (from base-N representation).
         this.progress = 0;
         this.ticks = 0;
+
+        // For solid rendering + smoothed multiplier
+        this.solid = false;
+        this.multAverage = null;
     }
 
     exists() {
@@ -41,6 +45,8 @@ class CirclesGame {
         this.totalUnits = 0;
 
         this.lastTime = performance.now();
+        this.lastDt = 0;
+        this.loopRate0 = 0;
 
         // Dynamic parameters (upgradable)
         this.baseLoopThreshold = LOOP_THRESHOLD;
@@ -65,6 +71,9 @@ class CirclesGame {
         // Track the highest ring digit to detect its wrap
         this.lastTopDigit = null;
 
+        // Global speed scale (ArrowUp / ArrowDown)
+        this.speedScale = 1.0;
+
         // Default cursor; hover will switch to pointer only over buttons.
         this.canvas.style.cursor = "default";
 
@@ -74,6 +83,9 @@ class CirclesGame {
         // Click / hover for upgrades
         this.canvas.addEventListener("click", (e) => this.handleClick(e));
         this.canvas.addEventListener("mousemove", (e) => this.handleHover(e));
+
+        // Keyboard controls: ArrowUp, ArrowDown, Enter
+        window.addEventListener("keydown", (e) => this.handleKey(e));
 
         requestAnimationFrame((t) => this.loop(t));
     }
@@ -101,8 +113,13 @@ class CirclesGame {
         this.rings = [];
         this.addRing(); // ring 0 only
         this.rings[0].progress = 0;
+        this.rings[0].solid = false;
+        this.rings[0].multAverage = null;
+
         this.totalUnits = 0;
         this.lastTime = performance.now();
+        this.lastDt = 0;
+        this.loopRate0 = 0;
 
         this.loopThreshold = this.baseLoopThreshold;
         this.multScale = this.baseMultScale;
@@ -111,6 +128,9 @@ class CirclesGame {
         this.winState.active = false;
         this.winState.timer = 0;
         this.lastTopDigit = null;
+
+        // Reset speed scale as well
+        this.speedScale = 1.0;
     }
 
     startWinAnimation() {
@@ -150,6 +170,8 @@ class CirclesGame {
             const ring = this.rings[i];
             ring.progress = 0;
             ring.ticks = 0;
+            ring.solid = false;
+            ring.multAverage = null;
         }
     }
 
@@ -179,6 +201,7 @@ class CirclesGame {
     loop(t) {
         const dt = Math.min((t - this.lastTime) / 1000, 0.2);
         this.lastTime = t;
+        this.lastDt = dt;
 
         this.update(dt);
         this.draw();
@@ -222,7 +245,10 @@ class CirclesGame {
         }
 
         this.multScale = this.computeMultScale();
-        const baseRate0 = this.computeBaseRate();
+
+        // Base rate for ring 0, then apply global speed scale.
+        const baseRate0Unscaled = this.computeBaseRate();
+        const baseRate0 = baseRate0Unscaled * this.speedScale;
 
         // Multiplier from higher rings based on their *current* progress.
         // mult_total = Π_{i>=1, ring exists} sqrt( multScale * (progress_i + 1) )
@@ -238,19 +264,28 @@ class CirclesGame {
 
         const speed0 = baseRate0 * totalMult;
 
+        // Loops per second of ring 0, used later for "solid loop" rendering.
+        this.loopRate0 = (this.loopThreshold > 0)
+            ? speed0 / this.loopThreshold
+            : 0;
+
         // Advance bottom ring's fractional progress over time.
         r0.progress += speed0 * dt;
 
-        // Each time it hits the threshold, convert that to +1 totalUnit.
-        while (r0.progress >= this.loopThreshold) {
-            r0.progress -= this.loopThreshold;
-            this.totalUnits += 1;
+        // Convert overshoot into integer completions in one step
+        // instead of looping one-by-one (avoids lag when very fast).
+        if (this.loopThreshold > 0) {
+            const loops = Math.floor(r0.progress / this.loopThreshold);
+            if (loops > 0) {
+                r0.progress -= loops * this.loopThreshold;
+                this.totalUnits += loops;
+            }
         }
 
         // Now that totalUnits changed, rebuild rings[1..] from it.
         this.rebuildFromTotal();
 
-        // Win detection based on the 16th ring (index 15) completing a loop.
+        // Win detection based on the 12th ring (index 11) completing a loop.
         if (this.rings.length >= 12) {
             const topRing = this.rings[11];
             const digit = topRing.progress;
@@ -266,6 +301,34 @@ class CirclesGame {
             this.lastTopDigit = digit;
         } else {
             this.lastTopDigit = null;
+        }
+    }
+
+    //////////////////////////////////////////////////////
+    // Keyboard controls
+    //////////////////////////////////////////////////////
+
+    handleKey(e) {
+        // Prevent auto-repeat from spamming if you want single steps
+        if (e.repeat) {
+            return;
+        }
+
+        if (e.key === "ArrowUp") {
+            // Double base speed
+            this.speedScale *= 2;
+        } else if (e.key === "ArrowDown") {
+            // Half base speed
+            this.speedScale /= 2;
+        } else if (e.key === "Enter") {
+            // Trigger an instant win
+            if (!this.winState.active) {
+                if (typeof this.onWin === "function") {
+                    this.onWin();
+                } else {
+                    this.startWinAnimation();
+                }
+            }
         }
     }
 

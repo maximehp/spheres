@@ -199,29 +199,49 @@ CirclesGame.prototype.draw = function () {
     ctx.textBaseline = "bottom";
     ctx.font = "14px 'Blockletter'";
 
-    // Fixed 16-slot mapping:
-    // slot s in [0, MAX_SLOTS-1] -> lat in [maxLat, -maxLat]
     const maxLat = Math.PI * 0.45;
+
+    // Ring 0 loop rate was computed in update; default to 0 if not set.
+    const loopRate0 = this.loopRate0 || 0;
+
+    // Hysteresis thresholds
+    const solidOnThreshold = 10;  // become solid when >= 10 loops/sec
+    const solidOffThreshold = 4;  // stop being solid when <= 4 loops/sec
+
+    // dt for smoothing, default to ~60 FPS if not yet set
+    const dt = this.lastDt || 0.016;
+    const smoothingWindow = 1.0;  // about 1 second
+    const alpha = Math.min(1, dt / smoothingWindow);
 
     for (let slot = 0; slot < usedSlots; slot++) {
         const ringIndex = visibleIndices[slot];
         const ring = this.rings[ringIndex];
 
+        // Approximate loops/sec for this ring.
+        let ringLoopRate = 0;
+        if (this.loopThreshold > 0) {
+            ringLoopRate = loopRate0 / Math.pow(this.loopThreshold, ringIndex);
+        }
+
+        // Hysteresis: latch solid on at 10, release at 4
+        if (!ring.solid && ringLoopRate >= solidOnThreshold) {
+            ring.solid = true;
+        } else if (ring.solid && ringLoopRate <= solidOffThreshold) {
+            ring.solid = false;
+        }
+        const isSolid = ring.solid;
+
         // t = slot position in [0, MAX_SLOTS-1]
         const t = MAX_SLOTS === 1 ? 0.5 : slot / (MAX_SLOTS - 1);
-        // lat: t=0 is north pole-ish, t=1 is south pole-ish
         const lat = (0.5 - t) * 2 * maxLat;
 
-        // If latitude is beyond ±90°, that ring would be on the backside;
-        // with maxLat < π/2 this should not happen, but keep the check.
         if (lat <= -Math.PI / 2 || lat >= Math.PI / 2) {
             continue;
         }
 
-        // Position and shape of the band
         const yOffset = Math.sin(lat) * sphereRadius;
         const k = Math.cos(lat);
-        const rx = sphereRadius * Math.abs(k);
+        const rx = sphereRadius * 1.1 * Math.abs(k);
         const ry = sphereRadius * 0.55 * Math.abs(k);
 
         const centerY = cySphere + yOffset;
@@ -232,8 +252,14 @@ CirclesGame.prototype.draw = function () {
         ctx.strokeStyle = "rgba(0,0,0,0.65)";
         this.drawEllipseArc(ctx, cx, centerY, rx, ry, 0, Math.PI * 2);
 
-        // Progress arc
-        const frac = Math.max(0, Math.min(1, ring.progress / this.loopThreshold));
+        // Progress arc: solid vs fractional
+        let frac = 0;
+        if (isSolid) {
+            frac = 1;
+        } else {
+            frac = Math.max(0, Math.min(1, ring.progress / this.loopThreshold));
+        }
+
         if (frac > 0) {
             const start = -Math.PI / 2;
             const end = start + frac * Math.PI * 2;
@@ -246,9 +272,26 @@ CirclesGame.prototype.draw = function () {
 
         // Multiplier label for higher rings with nonzero progress
         if (ringIndex > 0 && ring.progress > 0) {
+            // instantaneous multiplier
             const term = this.multScale * (ring.progress + 1);
-            const mult = Math.sqrt(Math.max(0, term));
-            const label = `${mult.toFixed(2)}x`;
+            const instMult = Math.sqrt(Math.max(0, term));
+
+            let displayMult;
+            if (isSolid) {
+                // For solid rings, smooth over about 1 second using EMA
+                if (ring.multAverage == null) {
+                    ring.multAverage = instMult;
+                } else {
+                    ring.multAverage += (instMult - ring.multAverage) * alpha;
+                }
+                displayMult = ring.multAverage;
+            } else {
+                // For non-solid rings, show the raw multiplier and reset the average
+                ring.multAverage = null;
+                displayMult = instMult;
+            }
+
+            const label = `${displayMult.toFixed(2)}x`;
 
             const thetaTop = -Math.PI / 2;
             const labelX = cx + rx * Math.cos(thetaTop);
@@ -284,7 +327,7 @@ CirclesGame.prototype.draw = function () {
         const baseR = Math.min(w, h) * 0.35;
 
         for (let i = 0; i < 6; i++) {
-            const p = (t * 1.3 + i * 0.12) % 1;
+            const p = (t * 1.3 + i * 0.15) % 1;
             const r = baseR + p * baseR * 1.2;
 
             ctx.beginPath();
