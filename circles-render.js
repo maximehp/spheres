@@ -68,12 +68,18 @@ CirclesGame.prototype.drawUpgradeButtons = function (ctx, cx, cySphere, sphereRa
     for (let i = 0; i < 4; i++) {
         const pos = positions[i];
 
-        // special case: loop /1.5 upgrade
+        // special case: loop /1.3 upgrade max detection
         let isMax = false;
         if (i === 1) {
-            const current = this.loopThreshold;
-            const next = Math.ceil(current / 1.5);
-            if (next === current) isMax = true;
+            const currentLevel = this.upgradeLevels[1];
+            const current = this.computeLoopThresholdForLevel(currentLevel);
+            const next = this.computeLoopThresholdForLevel(currentLevel + 1);
+
+            // If we are already at the minimum (5) or an extra level does not
+            // change the threshold, treat as maxed.
+            if (current <= 5 || next === current) {
+                isMax = true;
+            }
         }
 
         const cost = isMax ? 0 : this.getUpgradeCost(i);
@@ -117,6 +123,178 @@ CirclesGame.prototype.drawUpgradeButtons = function (ctx, cx, cySphere, sphereRa
         ctx.font = "30px 'Blockletter'";
         ctx.fillText(costText, cxBtn, cyBtn + 40);
     }
+
+    // Tooltip overlay for hovered upgrade (relies on handleHover + getUpgradeTooltipInfo)
+    if (this.hoveredUpgradeIndex !== null && this.hoveredUpgradeIndex !== undefined) {
+        this.drawUpgradeTooltip(ctx);
+    }
+};
+
+CirclesGame.prototype.drawUpgradeTooltip = function (ctx) {
+    const index = this.hoveredUpgradeIndex;
+    if (index == null) {
+        return;
+    }
+
+    const btn = this.upgradeButtons[index];
+    if (!btn) {
+        return;
+    }
+
+    const info = this.getUpgradeTooltipInfo(index);
+
+    const dpr = window.devicePixelRatio || 1;
+    const canvasWidth = this.canvas.width / dpr;
+    const canvasHeight = this.canvas.height / dpr;
+    const centerX = canvasWidth / 2;
+
+    const padding = 12;
+    const boxWidth = 280;
+    const boxHeight = 140;
+
+    // Decide side based on whether the button is left or right of the sphere center.
+    const buttonCenterX = btn.x + btn.size / 2;
+    let x;
+
+    if (buttonCenterX < centerX) {
+        // Button is on the left of the sphere, put tooltip to the RIGHT of the button.
+        x = btn.x + btn.size + padding;
+    } else {
+        // Button is on the right of the sphere, put tooltip to the LEFT of the button.
+        x = btn.x - boxWidth - padding;
+    }
+
+    let y = btn.y;
+
+    // Clamp horizontally so we do not go off edges.
+    if (x + boxWidth > canvasWidth - 10) {
+        x = canvasWidth - 10 - boxWidth;
+    }
+    if (x < 10) {
+        x = 10;
+    }
+
+    // Clamp vertically inside canvas
+    if (y + boxHeight > canvasHeight - 10) {
+        y = canvasHeight - 10 - boxHeight;
+    }
+    if (y < 10) {
+        y = 10;
+    }
+
+    const total = this.totalUnits;
+    const cost = info.isMax ? 0 : this.getUpgradeCost(index);
+    const affordable = !info.isMax && total >= cost;
+
+    // Background style similar to button
+    ctx.beginPath();
+    ctx.rect(x, y, boxWidth, boxHeight);
+    ctx.fillStyle = info.isMax
+        ? "rgba(60, 60, 60, 0.9)"
+        : affordable
+            ? "rgba(15, 20, 40, 0.98)"
+            : "rgba(10, 10, 20, 0.9)";
+    ctx.fill();
+
+    ctx.lineWidth = affordable ? 2 : 1;
+    ctx.strokeStyle = info.isMax
+        ? "rgba(150,150,150,0.8)"
+        : affordable
+            ? "rgba(200, 230, 255, 0.98)"
+            : "rgba(120, 140, 170, 0.8)";
+    ctx.stroke();
+
+    const innerX = x + 10;
+    const innerY = y + 8;
+    const innerWidth = boxWidth - 20;
+
+    // Title
+    ctx.textBaseline = "top";
+    ctx.textAlign = "left";
+    ctx.font = "18px 'Blockletter'";
+    ctx.fillStyle = info.isMax ? "#f0f0f0" : "#f6f6ff";
+    ctx.fillText(info.title, innerX, innerY);
+
+    // Description + stats
+    ctx.font = "14px 'Blockletter'";
+    ctx.fillStyle = "#d0d0ff";
+    let lineY = innerY + 26;
+
+    // Helper: wrap text inside given width
+    function wrapText(ctx, text, maxWidth) {
+        const words = text.split(" ");
+        const lines = [];
+        let line = "";
+
+        for (let i = 0; i < words.length; i++) {
+            const word = words[i];
+            const testLine = line.length > 0 ? line + " " + word : word;
+            const metrics = ctx.measureText(testLine);
+            if (metrics.width > maxWidth && line.length > 0) {
+                lines.push(line);
+                line = word;
+            } else {
+                line = testLine;
+            }
+        }
+        if (line.length > 0) {
+            lines.push(line);
+        }
+        return lines;
+    }
+
+    for (let i = 0; i < info.lines.length; i++) {
+        const rawLine = info.lines[i];
+        if (!rawLine) {
+            continue;
+        }
+
+        const colonIndex = rawLine.indexOf(":");
+
+        if (colonIndex !== -1 && colonIndex < rawLine.length - 1) {
+            // label: value pattern
+            const labelPart = rawLine.slice(0, colonIndex + 1);
+            const valuePart = rawLine.slice(colonIndex + 1).trim();
+
+            // Leave room on the right for the value
+            const maxLabelWidth = innerWidth - 60;
+
+            const labelLines = wrapText(ctx, labelPart, maxLabelWidth);
+
+            for (let j = 0; j < labelLines.length; j++) {
+                const isLast = (j === labelLines.length - 1);
+
+                // Draw label on the left
+                ctx.textAlign = "left";
+                ctx.fillText(labelLines[j], innerX, lineY);
+
+                if (isLast) {
+                    // Draw value on the right on the same baseline
+                    ctx.textAlign = "right";
+                    ctx.fillText(valuePart, x + boxWidth - 10, lineY);
+                }
+
+                lineY += 18;
+            }
+
+            ctx.textAlign = "left"; // reset
+        } else {
+            // Plain text, wrap as a normal paragraph
+            const wrappedLines = wrapText(ctx, rawLine, innerWidth);
+            for (let j = 0; j < wrappedLines.length; j++) {
+                ctx.textAlign = "left";
+                ctx.fillText(wrappedLines[j], innerX, lineY);
+                lineY += 18;
+            }
+        }
+    }
+
+    // Small hint at bottom
+    ctx.font = "12px 'Blockletter'";
+    ctx.textAlign = "left";
+    ctx.fillStyle = info.isMax ? "#c0c0c0" : "#ffd2ff";
+    const hintText = info.isMax ? "MAXED" : "click to buy";
+    ctx.fillText(hintText, innerX, y + boxHeight - 18);
 };
 
 CirclesGame.prototype.ringColor = function (i) {
@@ -178,9 +356,6 @@ CirclesGame.prototype.draw = function () {
         : 0.0;
 
     this.drawSphereBackground(ctx, cx, cySphere, sphereRadius, opacityFactor);
-
-    // Upgrade buttons in four corners around the circle
-    this.drawUpgradeButtons(ctx, cx, cySphere, sphereRadius);
 
     if (usedSlots === 0) {
         // Win overlay can still run, but there is nothing to draw for rings.
@@ -305,6 +480,9 @@ CirclesGame.prototype.draw = function () {
             ctx.fillText(label, labelX, labelY);
         }
     }
+
+    // Upgrade buttons in four corners around the circle (and tooltip)
+    this.drawUpgradeButtons(ctx, cx, cySphere, sphereRadius);
 
     // ===========================
     // WIN ANIMATION OVERLAY

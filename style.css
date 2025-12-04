@@ -42,8 +42,8 @@ body {
 /* Canvas */
 
 #circlesCanvas {
-  width: min(95vmin, 900px);   /* bigger canvas */
-  height: min(95vmin, 900px);
+  width: 100%;   /* bigger canvas */
+  height: 100%;
   display: block;
 
   /* remove circular clipping so the full canvas is visible */
@@ -62,7 +62,7 @@ body {
 .corner-btn {
   position: absolute;
   padding: 10px 18px;
-  border-radius: 999px;
+  border-radius: 100%;
   border: none;
   background: rgba(8, 16, 48, 0.86);
   color: #f6f7ff;
