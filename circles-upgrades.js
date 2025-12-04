@@ -40,11 +40,11 @@ CirclesGame.prototype.computeLoopThresholdForLevel = function (level) {
     const boost = this.getMetaBoostFactor();
 
     // Each level divides by 1.3^boost, then floors, then clamps to 5.
-    const perLevelDivisor = Math.pow(1.3, boost);
+    const perLevelMultiplier = Math.pow(0.75, boost);
 
     let threshold = base;
     for (let i = 0; i < level; i++) {
-        threshold = Math.max(5, Math.floor(threshold / perLevelDivisor));
+        threshold = Math.max(5, Math.floor(threshold * perLevelMultiplier));
     }
     return threshold;
 };
@@ -59,7 +59,7 @@ CirclesGame.prototype.computeBaseRate = function () {
 };
 
 // New behavior: loop threshold is derived from discrete levels using
-// computeLoopThresholdForLevel, with /1.3 and floor, min 5.
+// computeLoopThresholdForLevel, with *0.75 and floor, min 5.
 CirclesGame.prototype.computeLoopThreshold = function () {
     const level = this.upgradeLevels[1];
     return this.computeLoopThresholdForLevel(level);
@@ -83,7 +83,7 @@ CirclesGame.prototype.getUpgradeLabel = function (index) {
     if (index === 0) {
         return `rate x2`;
     } else if (index === 1) {
-        return `loop /1.3`;
+        return `loop *0.75`;
     } else if (index === 2) {
         return `mult x1.2`;
     } else if (index === 3) {
@@ -124,7 +124,7 @@ CirclesGame.prototype.getUpgradeTooltipInfo = function (index) {
         info.lines.push(`Next level : ${nextLoopsPerSec.toFixed(2)} /s`);
 
     } else if (index === 1) {
-        // Loop /1.3
+        // Loop *0.75
         const level = this.upgradeLevels[1];
         const current = this.computeLoopThresholdForLevel(level);
         const next = this.computeLoopThresholdForLevel(level + 1);
@@ -132,7 +132,7 @@ CirclesGame.prototype.getUpgradeTooltipInfo = function (index) {
         const isMax = (current <= 5 || next === current);
         info.isMax = isMax;
 
-        info.title = "Loop threshold /1.3";
+        info.title = "Loop threshold *0.75";
         info.lines.push("Reduces loops needed for each wrap.");
 
         info.lines.push("");

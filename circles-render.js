@@ -440,6 +440,8 @@ CirclesGame.prototype.draw = function () {
     const smoothingWindow = 1.0;  // about 1 second
     const alpha = Math.min(1, dt / smoothingWindow);
 
+    const winActive = this.winState && this.winState.active;
+
     for (let slot = 0; slot < usedSlots; slot++) {
         const ringIndex = visibleIndices[slot];
         const ring = this.rings[ringIndex];
@@ -492,7 +494,10 @@ CirclesGame.prototype.draw = function () {
 
         // Progress arc: solid vs fractional
         let frac = 0;
-        if (isSolid) {
+        if (winActive) {
+            // During win animation, render all rings as fully complete
+            frac = 1;
+        } else if (isSolid) {
             frac = 1;
         } else {
             frac = Math.max(0, Math.min(1, displayProgress / displayLoopThreshold));
@@ -515,7 +520,7 @@ CirclesGame.prototype.draw = function () {
 
             let displayMult;
 
-            if (isSolid && !(spendAnim && fromRings && fromRings[ringIndex])) {
+            if (!winActive && isSolid && !(spendAnim && fromRings && fromRings[ringIndex])) {
                 // For solid rings without spend animation affecting them, smooth over about 1 second using EMA
                 if (ring.multAverage == null) {
                     ring.multAverage = instMult;
@@ -524,7 +529,7 @@ CirclesGame.prototype.draw = function () {
                 }
                 displayMult = ring.multAverage;
             } else {
-                // For non-solid or animating rings, show the raw multiplier
+                // For non-solid, animating, or win-state rings, show the raw multiplier
                 ring.multAverage = null;
                 displayMult = instMult;
             }
@@ -585,10 +590,10 @@ CirclesGame.prototype.draw = function () {
 
         ctx.lineWidth = 6 * alpha;
         ctx.strokeStyle = "rgba(0,0,0," + (0.9 * alpha) + ")";
-        ctx.strokeText("You\'re pretty good at circles", w / 2, h / 2);
+        ctx.strokeText("You\'re pretty good at spheres", w / 2, h / 2);
 
         ctx.fillStyle = "rgba(255,255,255," + alpha + ")";
-        ctx.fillText("You\'re pretty good at circles", w / 2, h / 2);
+        ctx.fillText("You\'re pretty good at spheres", w / 2, h / 2);
     }
 };
 
