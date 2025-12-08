@@ -61,6 +61,9 @@ class CirclesGame {
         this.upgradeLevels = [0, 0, 0, 0];
         this.upgradeButtons = [null, null, null, null];
 
+        // Top scientific notation state
+        this.sciLabelAlpha = 0;
+
         // Win animation state
         this.winState = {
             active: false,
@@ -73,6 +76,8 @@ class CirclesGame {
 
         // Global speed scale (ArrowUp / ArrowDown)
         this.speedScale = 1.0;
+
+        this.devUnlocked = false;
 
         // Default cursor; hover will switch to pointer only over buttons.
         this.canvas.style.cursor = "default";
@@ -136,6 +141,14 @@ class CirclesGame {
     startWinAnimation() {
         this.winState.active = true;
         this.winState.timer = 0;
+    }
+
+    markGameCompleted() {
+        if (!this.devUnlocked) {
+            this.devUnlocked = true;
+            // Persist this so dev tools stay unlocked across reloads.
+            this.saveLocal();
+        }
     }
 
     //////////////////////////////////////////////////////
@@ -293,9 +306,16 @@ class CirclesGame {
             if (this.lastTopDigit !== null &&
                 this.lastTopDigit > 0 &&
                 digit === 0 &&
-                !this.winState.active &&
-                typeof this.onWin === "function") {
-                this.onWin();
+                !this.winState.active) {
+
+                // Mark that the player has legitimately completed the game.
+                this.markGameCompleted();
+
+                if (typeof this.onWin === "function") {
+                    this.onWin();
+                } else {
+                    this.startWinAnimation();
+                }
             }
 
             this.lastTopDigit = digit;
@@ -312,8 +332,12 @@ class CirclesGame {
     //////////////////////////////////////////////////////
 
     handleKey(e) {
-        // Prevent auto-repeat from spamming if you want single steps
         if (e.repeat) {
+            return;
+        }
+
+        // Dev tools only available once the player has beaten the game at least once.
+        if (!this.devUnlocked) {
             return;
         }
 
@@ -378,7 +402,8 @@ class CirclesGame {
                 progress: r.progress,
                 ticks: r.ticks,
                 solid: r.solid
-            }))
+            })),
+            devUnlocked: this.devUnlocked
         };
     }
 
@@ -391,6 +416,7 @@ class CirclesGame {
         this.loopThreshold = s.loopThreshold ?? LOOP_THRESHOLD;
         this.multScale = s.multScale ?? 1.0;
         this.upgradeLevels = s.upgradeLevels ?? [0, 0, 0, 0];
+        this.devUnlocked = !!s.devUnlocked;
 
         this.rings = [];
         this.addRing();
