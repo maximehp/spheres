@@ -81,6 +81,38 @@ CirclesGame.prototype.draw = function () {
     ctx.fillStyle = "#ffffff";
     ctx.fillText(totalStr, cx, 8);
 
+    // Scientific notation version under the big number, with threshold + fade
+    if (this.sciLabelAlpha == null) {
+        this.sciLabelAlpha = 0;
+    }
+
+    const wantsSci = displayTotalUnits >= 1e6;
+    const targetAlpha = wantsSci ? 1 : 0;
+    const fadeSpeed = 1 / 0.5; // reach target in ~0.5s
+
+    if (this.sciLabelAlpha < targetAlpha) {
+        this.sciLabelAlpha = Math.min(targetAlpha, this.sciLabelAlpha + fadeSpeed * dt);
+    } else if (this.sciLabelAlpha > targetAlpha) {
+        this.sciLabelAlpha = Math.max(targetAlpha, this.sciLabelAlpha - fadeSpeed * dt);
+    }
+
+    if (this.sciLabelAlpha > 0.001) {
+        const sci = displayTotalUnits.toExponential(2).replace("+", "");
+
+        ctx.font = '18px "Blockletter"';
+        ctx.textBaseline = "top";
+
+        const strokeAlpha = 0.65 * this.sciLabelAlpha;
+        const fillAlpha = 1.0 * this.sciLabelAlpha;
+
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "rgba(0,0,0," + strokeAlpha + ")";
+        ctx.strokeText("(" + sci + ")", cx, 44);
+
+        ctx.fillStyle = "rgba(160,160,160," + fillAlpha + ")";
+        ctx.fillText("(" + sci + ")", cx, 44);
+    }
+
     // Sphere radius; slightly larger now.
     const sphereRadius = Math.min(w, h) * 0.32;
     const cySphere = cy + 10;

@@ -85,7 +85,7 @@ CirclesGame.prototype.getUpgradeLabel = function (index) {
     } else if (index === 1) {
         return `loop *0.80`;
     } else if (index === 2) {
-        return `mult x1.1`;
+        return `mult x1.2`;
     } else if (index === 3) {
         return `boost others`;
     }
@@ -152,10 +152,10 @@ CirclesGame.prototype.getUpgradeTooltipInfo = function (index) {
         const boost = this.getMetaBoostFactor();
 
         const nextPower = (level + 1) * boost;
-        const nextScaleRaw = Math.pow(1.1, nextPower);
+        const nextScaleRaw = Math.pow(1.2, nextPower);
         const nextScale = Math.max(0.05, nextScaleRaw);
 
-        info.title = "Multiplier x1.1";
+        info.title = "Multiplier x1.2";
         info.lines.push("Increases speed bonus from higher rings.");
 
         info.lines.push("");

@@ -61,6 +61,9 @@ class CirclesGame {
         this.upgradeLevels = [0, 0, 0, 0];
         this.upgradeButtons = [null, null, null, null];
 
+        // Top scientific notation state
+        this.sciLabelAlpha = 0;
+
         // Win animation state
         this.winState = {
             active: false,
