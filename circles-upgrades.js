@@ -3,8 +3,8 @@
 ///////////////////////////////////////////////////////
 
 CirclesGame.prototype.getUpgradeCost = function (index) {
-    const baseCosts = [5, 80, 250, 5000];
-    const growth = [10.0, 5.0, 100.0, 200.0];
+    const baseCosts = [5, 80, 250, 1000];
+    const growth = [10.0, 5.0, 100.0, 1000.0];
     const level = this.upgradeLevels[index];
     return Math.floor(baseCosts[index] * Math.pow(growth[index], level));
 };
@@ -30,7 +30,7 @@ CirclesGame.prototype.formatCost = function (value) {
 
 CirclesGame.prototype.getMetaBoostFactor = function () {
     const metaLevel = this.upgradeLevels[3];
-    return 1.0 + 0.20 * metaLevel; // 1.0, 1.2, 1.4, ...
+    return 1.0 + 0.10 * metaLevel; // 1.0, 1.2, 1.4, ...
 };
 
 // Helper: compute loop threshold for a specific level of the loop-upgrade,
@@ -40,11 +40,11 @@ CirclesGame.prototype.computeLoopThresholdForLevel = function (level) {
     const boost = this.getMetaBoostFactor();
 
     // Each level divides by 1.3^boost, then floors, then clamps to 5.
-    const perLevelMultiplier = Math.pow(0.75, boost);
+    const perLevelMultiplier = Math.pow(0.8, boost);
 
     let threshold = base;
     for (let i = 0; i < level; i++) {
-        threshold = Math.max(5, Math.floor(threshold * perLevelMultiplier));
+        threshold = Math.max(8, Math.floor(threshold * perLevelMultiplier));
     }
     return threshold;
 };
@@ -83,9 +83,9 @@ CirclesGame.prototype.getUpgradeLabel = function (index) {
     if (index === 0) {
         return `rate x2`;
     } else if (index === 1) {
-        return `loop *0.75`;
+        return `loop *0.80`;
     } else if (index === 2) {
-        return `mult x1.2`;
+        return `mult x1.1`;
     } else if (index === 3) {
         return `boost others`;
     }
@@ -100,7 +100,7 @@ CirclesGame.prototype.getUpgradeTooltipInfo = function (index) {
     };
 
     if (index === 0) {
-        // Rate x2
+        // Rate *X
         const base = this.baseBaseRate;
         const level = this.upgradeLevels[0];
         const boost = this.getMetaBoostFactor();
@@ -124,7 +124,7 @@ CirclesGame.prototype.getUpgradeTooltipInfo = function (index) {
         info.lines.push(`Next level : ${nextLoopsPerSec.toFixed(2)} /s`);
 
     } else if (index === 1) {
-        // Loop *0.75
+        // Loop *0.X
         const level = this.upgradeLevels[1];
         const current = this.computeLoopThresholdForLevel(level);
         const next = this.computeLoopThresholdForLevel(level + 1);
@@ -132,7 +132,7 @@ CirclesGame.prototype.getUpgradeTooltipInfo = function (index) {
         const isMax = (current <= 5 || next === current);
         info.isMax = isMax;
 
-        info.title = "Loop threshold *0.75";
+        info.title = "Loop threshold *0.8";
         info.lines.push("Reduces loops needed for each wrap.");
 
         info.lines.push("");
@@ -146,16 +146,16 @@ CirclesGame.prototype.getUpgradeTooltipInfo = function (index) {
         }
 
     } else if (index === 2) {
-        // Mult x1.2
+        // Mult *X
         const currentScale = this.computeMultScale();
         const level = this.upgradeLevels[2];
         const boost = this.getMetaBoostFactor();
 
         const nextPower = (level + 1) * boost;
-        const nextScaleRaw = Math.pow(1.2, nextPower);
+        const nextScaleRaw = Math.pow(1.1, nextPower);
         const nextScale = Math.max(0.05, nextScaleRaw);
 
-        info.title = "Multiplier x1.2";
+        info.title = "Multiplier x1.1";
         info.lines.push("Increases speed bonus from higher rings.");
 
         info.lines.push("");
@@ -164,7 +164,7 @@ CirclesGame.prototype.getUpgradeTooltipInfo = function (index) {
         info.lines.push(`Next level : x${nextScale.toFixed(2)}`);
 
     } else if (index === 3) {
-        // Boost others
+        // Boost others by *X
         const currentFactor = this.getMetaBoostFactor();
         const nextFactor = currentFactor + 0.20;
 
