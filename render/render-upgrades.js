@@ -25,7 +25,12 @@ CirclesGame.prototype.drawUpgradeButtons = function (ctx, cx, cySphere, sphereRa
             const current = this.computeLoopThresholdForLevel(currentLevel);
             const next = this.computeLoopThresholdForLevel(currentLevel + 1);
 
-            if (current <= 5 || next === current) {
+            if (current <= 8 || next === current) {
+                isMax = true;
+            }
+        } else if (i === 3) {
+            // boost others max 2 levels
+            if (this.upgradeLevels[3] >= 2) {
                 isMax = true;
             }
         }
