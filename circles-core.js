@@ -302,6 +302,9 @@ class CirclesGame {
         } else {
             this.lastTopDigit = null;
         }
+
+        // Auto-save current state
+        this.saveLocal();
     }
 
     //////////////////////////////////////////////////////
@@ -358,6 +361,75 @@ class CirclesGame {
 
             // Clear with logical size
             this.ctx.clearRect(0, 0, targetWidth, targetHeight);
+        }
+    }
+
+    //////////////////////////////////////////////////////
+    // SAVE / LOAD (localStorage)
+    //////////////////////////////////////////////////////
+
+    serializeState() {
+        return {
+            totalUnits: this.totalUnits,
+            loopThreshold: this.loopThreshold,
+            multScale: this.multScale,
+            upgradeLevels: this.upgradeLevels.slice(),
+            rings: this.rings.map(r => ({
+                progress: r.progress,
+                ticks: r.ticks,
+                solid: r.solid
+            }))
+        };
+    }
+
+    applyState(s) {
+        if (!s) {
+            return;
+        }
+
+        this.totalUnits = s.totalUnits ?? 0;
+        this.loopThreshold = s.loopThreshold ?? LOOP_THRESHOLD;
+        this.multScale = s.multScale ?? 1.0;
+        this.upgradeLevels = s.upgradeLevels ?? [0, 0, 0, 0];
+
+        this.rings = [];
+        this.addRing();
+
+        if (s.rings && s.rings.length > 1) {
+            for (let i = 1; i < s.rings.length; i++) {
+                this.addRing();
+            }
+            for (let i = 0; i < s.rings.length; i++) {
+                this.rings[i].progress = s.rings[i].progress;
+                this.rings[i].ticks = s.rings[i].ticks;
+                this.rings[i].solid = s.rings[i].solid;
+            }
+        }
+
+        this.rebuildFromTotal();
+    }
+
+    saveLocal() {
+        try {
+            const json = JSON.stringify(this.serializeState());
+            localStorage.setItem("spheres-save", json);
+        } catch (e) {
+            console.warn("Failed to save", e);
+        }
+    }
+
+    loadLocal() {
+        const raw = localStorage.getItem("spheres-save");
+        if (!raw) {
+            return false;
+        }
+        try {
+            const obj = JSON.parse(raw);
+            this.applyState(obj);
+            return true;
+        } catch (e) {
+            console.warn("Failed to load save", e);
+            return false;
         }
     }
 }

@@ -12,8 +12,11 @@
             <!-- About button -->
             <button id="aboutBtn" class="corner-btn">?</button>
 
-            <!-- Music toggle button -->
-            <button id="musicBtn" class="corner-btn music-btn">♫</button>
+            <!-- Music controls (button + slider) -->
+            <div class="music-slider" id="musicControls">
+                <div class="music-slider-track" id="musicTrack"></div>
+                <div class="music-slider-thumb" id="musicThumb">♫</div>
+            </div>
 
             <canvas id="circlesCanvas"></canvas>
 
@@ -40,17 +43,10 @@
             <p>Made for an English class in college.</p>
             <p>Used Vanta.js for the background and three.js for the sphere rendering.</p>
 
-            <p style="margin-top: 12px;">
-                Background music:
-                <br>
-                <strong>
-                    <a href="https://soundcloud.com/boo-moo-shoo/my-lofi-collection-1-hour-of-aesthetic-calm-lofi-music-free-no-copyright-music"
-                       target="_blank"
-                       rel="noopener noreferrer">
-                       My Lofi Collection – Boo Moo Shoo (SoundCloud)
-                    </a>
-                </strong>
-            </p>
+            <div style="margin-top:15px;">
+                <button id="exportBtn" class="modal-reset-btn" style="background:#4a89ff;">Export Save</button>
+                <button id="importBtn" class="modal-reset-btn" style="background:#4a89ff;">Import Save</button>
+            </div>
 
             <button id="resetBtn" class="modal-reset-btn">Reset Progress</button>
             <button id="closeAbout" class="modal-close-btn">Close</button>
@@ -65,53 +61,20 @@
     <script src="https://cdn.jsdelivr.net/npm/vanta@latest/dist/vanta.waves.min.js"></script>
 
     <!-- Game scripts -->
+    <script src="crypto-utils.js"></script>
     <script src="circles-config.js"></script>
     <script src="circles-core.js"></script>
     <script src="circles-upgrades.js"></script>
-    <script src="circles-render.js"></script>
+
+    <!-- Rendering modules -->
+    <script src="render/render-sphere.js"></script>
+    <script src="render/render-upgrades.js"></script>
+    <script src="render/render-main.js"></script>
+
+    <!-- Entry point -->
     <script src="circles-main.js"></script>
 
-    <!-- Music Control Script -->
-    <script>
-        document.addEventListener("DOMContentLoaded", () => {
-            const iframe = document.getElementById("scPlayer");
-            const musicBtn = document.getElementById("musicBtn");
-
-            const widget = SC.Widget(iframe);
-            let musicOn = false;
-            let initialized = false;
-
-            // Start muted
-            widget.setVolume(0);
-
-            function updateMusicButton() {
-                musicBtn.textContent = musicOn ? "♫" : "♩";
-            }
-
-            // Unmute or mute
-            musicBtn.addEventListener("click", () => {
-                if (!initialized) {
-                    // first user interaction: fully allowed
-                    widget.setVolume(100);
-                    musicOn = true;
-                    initialized = true;
-                    updateMusicButton();
-                    return;
-                }
-
-                if (musicOn) {
-                    widget.setVolume(0);
-                    musicOn = false;
-                } else {
-                    widget.setVolume(100);
-                    musicOn = true;
-                }
-
-                updateMusicButton();
-            });
-
-            updateMusicButton();
-        });
-    </script>
+    <!-- Music Control -->
+    <script src="music-utils.js"></script>
 </body>
 </html>
