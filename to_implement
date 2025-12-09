@@ -1,6 +1,11 @@
 - Post sphere progression
 - Prestige/rebirth system
 - Challenge stages
-- Final win at 12 spheres
-- Rebalance upgrades again
-- Dev tools enable when you win
+- Final win at 9 spheres
+
+
+you complete the first loop and itll stay full (become a different object that is identical but static) and have an animation of shrinking to a specific spot, then a pop up will happen that shows 8 stages with the one you just completed checked off
+they arent linear stages, theyre more like challenges, where each one has a handicap, and some are harder than others and reward more points (i can have point recommendations for each)
+points will be used for upgrades in this same menu that have overreaching effects that permeate and are more special than standard upgrades
+they can be redistributed at whim, but you have to restart your stage to do so
+once you finish all 8 stages, you go to a final stage, which is like a 50 or 100 loop sphere, and when you finish that, all the other spheres start circling around the big one and it plays the win animation

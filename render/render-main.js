@@ -20,8 +20,8 @@ CirclesGame.prototype.draw = function () {
 
     ctx.clearRect(0, 0, w, h);
 
-    const cx = w / 2;
-    const cy = h / 2;
+    const cxBase = w / 2;
+    const cyBase = h / 2;
 
     const dt = this.lastDt || 0.016;
 
@@ -76,10 +76,10 @@ CirclesGame.prototype.draw = function () {
 
     ctx.lineWidth = 4;
     ctx.strokeStyle = "rgba(0,0,0,0.65)";
-    ctx.strokeText(totalStr, cx, 8);
+    ctx.strokeText(totalStr, cxBase, 8);
 
     ctx.fillStyle = "#ffffff";
-    ctx.fillText(totalStr, cx, 8);
+    ctx.fillText(totalStr, cxBase, 8);
 
     // Scientific notation version under the big number, with threshold + fade
     if (this.sciLabelAlpha == null) {
@@ -107,15 +107,43 @@ CirclesGame.prototype.draw = function () {
 
         ctx.lineWidth = 3;
         ctx.strokeStyle = "rgba(0,0,0," + strokeAlpha + ")";
-        ctx.strokeText("(" + sci + ")", cx, 44);
+        ctx.strokeText("(" + sci + ")", cxBase, 44);
 
         ctx.fillStyle = "rgba(160,160,160," + fillAlpha + ")";
-        ctx.fillText("(" + sci + ")", cx, 44);
+        ctx.fillText("(" + sci + ")", cxBase, 44);
     }
 
-    // Sphere radius; slightly larger now.
-    const sphereRadius = Math.min(w, h) * 0.32;
-    const cySphere = cy + 10;
+    // Base sphere geometry (unanimated)
+    const sphereRadiusBase = Math.min(w, h) * 0.32;
+    const cySphereBase = cyBase + 10;
+
+    // Animated sphere center and radius (for run-complete shrink)
+    let cxSphere = cxBase;
+    let cySphere = cySphereBase;
+    let sphereRadius = sphereRadiusBase;
+
+    const runAnimActive = this.runCompleteAnim && this.runCompleteAnim.active;
+    const flashActive = this.runCompleteFlash && this.runCompleteFlash.active;
+    const runAnimOrStatic = runAnimActive || this.completedSphereStatic || flashActive;
+
+    if (this.runCompleteAnim && (this.runCompleteAnim.active || this.runCompleteAnim.t > 0)) {
+        const anim = this.runCompleteAnim;
+        const fRaw = anim.duration > 0 ? anim.t / anim.duration : 1;
+        const f = Math.max(0, Math.min(1, fRaw));
+
+        const baseOffset = sphereRadiusBase * STAGE_ORBIT_RADIUS_FACTOR;
+        const offset = baseOffset * f;
+
+        const angle = anim.angle || this.getStageAngle(this.activeStageIndex);
+        const targetCx = cxBase + Math.cos(angle) * offset;
+        const targetCy = cySphereBase + Math.sin(angle) * offset;
+
+        cxSphere = cxBase + (targetCx - cxBase) * f;
+        cySphere = cySphereBase + (targetCy - cySphereBase) * f;
+
+        const minRadius = sphereRadiusBase * (anim.targetRadiusScale || STAGE_SPHERE_RADIUS_FACTOR);
+        sphereRadius = sphereRadiusBase + (minRadius - sphereRadiusBase) * f;
+    }
 
     // Collect indices of rings that exist (for animation, treat rings that used to
     // exist OR currently exist as visible).
@@ -137,14 +165,18 @@ CirclesGame.prototype.draw = function () {
         ? (usedSlots / MAX_SLOTS)
         : 0.0;
 
-    this.drawSphereBackground(ctx, cx, cySphere, sphereRadius, opacityFactor);
+    this.drawSphereBackground(ctx, cxSphere, cySphere, sphereRadius, opacityFactor);
 
     if (usedSlots === 0) {
         // Win overlay can still run, but there is nothing to draw for rings.
         if (this.winState && this.winState.active) {
             // fall through to overlay
         } else {
-            return;
+            // Draw upgrade buttons anyway, anchored to base sphere
+            this.drawUpgradeButtons(ctx, cxBase, cySphereBase, sphereRadiusBase);
+            // Flash / win overlay can still draw over this if active.
+            // But no rings to render, so we can safely skip the ring loop.
+            // (Do not return early if you want flash or win overlay to show.)
         }
     }
 
@@ -193,7 +225,7 @@ CirclesGame.prototype.draw = function () {
         // Background ellipse
         ctx.lineWidth = 2;
         ctx.strokeStyle = "rgba(0,0,0,0.65)";
-        this.drawEllipseArc(ctx, cx, centerY, rx, ry, 0, Math.PI * 2);
+        this.drawEllipseArc(ctx, cxSphere, centerY, rx, ry, 0, Math.PI * 2);
 
         // Approximate loops/sec for this ring, use REAL threshold for logic
         let ringLoopRate = 0;
@@ -214,7 +246,6 @@ CirclesGame.prototype.draw = function () {
         if (spendAnim && fromRings && fromRings[ringIndex] && fromRings[ringIndex].exists) {
             const fromProg = fromRings[ringIndex].progress;
             displayProgress = fromProg + (ring.progress - fromProg) * spendF;
-            // If the old ring was solid, keep it visually solid during the blend
             if (fromRings[ringIndex].solid) {
                 isSolid = true;
             }
@@ -223,7 +254,6 @@ CirclesGame.prototype.draw = function () {
         // Progress arc: solid vs fractional
         let frac = 0;
         if (winActive) {
-            // During win animation, render all rings as fully complete
             frac = 1;
         } else if (isSolid) {
             frac = 1;
@@ -238,18 +268,18 @@ CirclesGame.prototype.draw = function () {
             ctx.lineWidth = 3.2;
             ctx.strokeStyle = col;
             ctx.lineCap = "round";
-            this.drawEllipseArc(ctx, cx, centerY, rx, ry, start, end);
+            this.drawEllipseArc(ctx, cxSphere, centerY, rx, ry, start, end);
         }
 
         // Multiplier label for higher rings with nonzero progress
-        if (ringIndex > 0 && displayProgress > 0) {
+        // Hide them during or after run-complete so the final sphere is clean.
+        if (!runAnimOrStatic && ringIndex > 0 && displayProgress > 0) {
             const term = displayMultScale * (displayProgress + 1);
             const instMult = Math.sqrt(Math.max(0, term));
 
             let displayMult;
 
             if (!winActive && isSolid && !(spendAnim && fromRings && fromRings[ringIndex])) {
-                // For solid rings without spend animation affecting them, smooth over about 1 second using EMA
                 if (ring.multAverage == null) {
                     ring.multAverage = instMult;
                 } else {
@@ -257,7 +287,6 @@ CirclesGame.prototype.draw = function () {
                 }
                 displayMult = ring.multAverage;
             } else {
-                // For non-solid, animating, or win-state rings, show the raw multiplier
                 ring.multAverage = null;
                 displayMult = instMult;
             }
@@ -265,7 +294,7 @@ CirclesGame.prototype.draw = function () {
             const label = `${displayMult.toFixed(2)}x`;
 
             const thetaTop = -Math.PI / 2;
-            const labelX = cx + rx * Math.cos(thetaTop);
+            const labelX = cxSphere + rx * Math.cos(thetaTop);
             const labelY = centerY + ry * Math.sin(thetaTop) - 4;
 
             ctx.lineWidth = 3;
@@ -277,8 +306,41 @@ CirclesGame.prototype.draw = function () {
         }
     }
 
-    // Upgrade buttons in four corners around the circle (and tooltip)
-    this.drawUpgradeButtons(ctx, cx, cySphere, sphereRadius);
+    this.drawCompletedStageSpheres(ctx, cxBase, cySphereBase, sphereRadiusBase);
+    this.drawStagesButton(ctx, w, h);     // canvas stages button
+
+    // Upgrade buttons anchored to the original sphere position,
+    // not the animated one.
+    this.drawUpgradeButtons(ctx, cxBase, cySphereBase, sphereRadiusBase);
+
+    // ===========================
+    // RUN-COMPLETE FLASH OVERLAY
+    // ===========================
+    if (this.runCompleteFlash && this.runCompleteFlash.active) {
+        const tF = this.runCompleteFlash.timer;
+        const Df = this.runCompleteFlash.duration;
+
+        const phase = Math.max(0, Math.min(1, tF / Df));
+
+        // Mild brightness wash
+        const flashAlpha = (1 - Math.abs(phase * 2 - 1)) * 0.35;
+        ctx.fillStyle = "rgba(255,255,255," + flashAlpha + ")";
+        ctx.fillRect(0, 0, w, h);
+
+        // Single expanding pulse ring from the sphere's current position.
+        // Because we use cxSphere / cySphere, the ring follows the sphere as it moves.
+        const baseR = Math.min(w, h) * 0.35;
+        const p = phase;
+        const r = baseR + p * baseR * 1.4;
+
+        ctx.beginPath();
+        ctx.arc(cxSphere, cySphere, r, 0, Math.PI * 2);
+        ctx.lineWidth = 4 * (1 - p);
+        ctx.strokeStyle = "rgba(255,255,255," + ((1 - p) * 0.7) + ")";
+        ctx.stroke();
+    }
+
+    this.drawStagesModal(ctx, w, h);      // modal (if open)
 
     // ===========================
     // WIN ANIMATION OVERLAY
@@ -291,11 +353,9 @@ CirclesGame.prototype.draw = function () {
         const alphaOut = Math.max(0, 1 - (tWin - 1.0) / 2.2);
         const alpha = Math.min(alphaIn, alphaOut);
 
-        // Brightness wash
         ctx.fillStyle = "rgba(255,255,255," + (0.28 * alpha) + ")";
         ctx.fillRect(0, 0, w, h);
 
-        // Expanding pulse rings
         const cxMid = w / 2;
         const cyMid = h / 2 + 10;
         const baseR = Math.min(w, h) * 0.35;
@@ -311,7 +371,6 @@ CirclesGame.prototype.draw = function () {
             ctx.stroke();
         }
 
-        // Final message
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.font = '48px "Blockletter"';

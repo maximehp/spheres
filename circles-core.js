@@ -57,14 +57,54 @@ class CirclesGame {
         this.baseMultScale = 1.0;
         this.multScale = 1.0;
 
-        // Upgrades: [rate x2, threshold /1.5, mult root *0.9, boost others]
+        // Upgrades: [rate x2, threshold, mult, boost others]
         this.upgradeLevels = [0, 0, 0, 0];
         this.upgradeButtons = [null, null, null, null];
 
         // Top scientific notation state
         this.sciLabelAlpha = 0;
 
-        // Win animation state
+        // Stage meta
+        this.stageCount = 9;
+        this.stageCompleted = new Array(this.stageCount).fill(false);
+        this.activeStageIndex = 0;
+
+        this.completedStageSpheres = [];
+
+        this.stagesModalVisible = false;
+        this.stagesModalBounds = null;  // where the modal is drawn
+        this.stageRowBounds = [];       // clickable rows
+        this.stageModalCloseBounds = null; // X button
+
+        // Timer for auto-opening the stages modal after a clear
+        this.stageModalTimer = {
+            active: false,
+            t: 0,
+            delay: 3.0   // seconds
+        };
+
+        // Run-complete shrink animation (sphere moves to its slot)
+        this.runCompleteAnim = {
+            active: false,
+            t: 0,
+            duration: 1.2,      // seconds
+            targetOffset: 0,    // computed in draw based on canvas size
+            targetRadiusScale: 0.2
+        };
+
+        // Once the run sphere is finished and parked
+        this.completedSphereStatic = false;
+
+        // Single-run completion flash (pulse from the sphere)
+        this.runCompleteFlash = {
+            active: false,
+            timer: 0,
+            duration: 2.0,       // pulse lives a bit longer
+            holdTime: 1.0,       // sphere stays in place for ~1s
+            startedShrink: false // new flag so we only trigger shrink once
+        };
+
+        // Win animation state (full game win, separate from run-complete)
         this.winState = {
             active: false,
             timer: 0,
@@ -94,262 +134,465 @@ class CirclesGame {
 
         requestAnimationFrame((t) => this.loop(t));
     }
+}
 
-    //////////////////////////////////////////////////////
-    // Ring management
-    //////////////////////////////////////////////////////
+///////////////////////////////////////////////////////
+// Ring management
+///////////////////////////////////////////////////////
 
-    addRing() {
-        const level = this.rings.length;
-        const base =
-            this.baseRates[level] ||
-            this.baseRates[this.baseRates.length - 1] * 0.75;
+CirclesGame.prototype.addRing = function () {
+    const level = this.rings.length;
+    const base =
+        this.baseRates[level] ||
+        this.baseRates[this.baseRates.length - 1] * 0.75;
 
-        this.rings.push(new Ring(level, base));
+    this.rings.push(new Ring(level, base));
+};
+
+CirclesGame.prototype.ensureRings = function (count) {
+    while (this.rings.length < count) {
+        this.addRing();
+    }
+};
+
+CirclesGame.prototype.resetAll = function () {
+    // Core run state
+    this.rings = [];
+    this.addRing(); // ring 0 only
+    this.rings[0].progress = 0;
+    this.rings[0].solid = false;
+    this.rings[0].multAverage = null;
+
+    this.totalUnits = 0;
+    this.lastTime = performance.now();
+    this.lastDt = 0;
+    this.loopRate0 = 0;
+
+    // Dynamic params
+    this.loopThreshold = this.baseLoopThreshold;
+    this.multScale = this.baseMultScale;
+    this.upgradeLevels = [0, 0, 0, 0];
+
+    // Top label + win tracking
+    this.sciLabelAlpha = 0;
+    this.winState.active = false;
+    this.winState.timer = 0;
+    this.lastTopDigit = null;
+
+    // Run-complete animation state
+    this.runCompleteAnim.active = false;
+    this.runCompleteAnim.t = 0;
+    this.completedSphereStatic = false;
+
+    this.runCompleteFlash.active = false;
+    this.runCompleteFlash.timer = 0;
+    this.runCompleteFlash.startedShrink = false;
+
+    // Global speed
+    this.speedScale = 1.0;
+
+    // Stage meta: fully wipe progress
+    this.stageCount = this.stageCount || 9;
+    this.stageCompleted = new Array(this.stageCount).fill(false);
+    this.activeStageIndex = 0;
+    this.completedStageSpheres = [];
+
+    // Hide stages modal and clear click targets
+    this.stagesModalVisible = false;
+    this.stageRowBounds = [];
+    this.stageModalCloseBounds = null;
+
+    if (typeof this.updateStagesToggleVisibility === "function") {
+        this.updateStagesToggleVisibility();
     }
 
-    ensureRings(count) {
-        while (this.rings.length < count) {
-            this.addRing();
-        }
+    // Reset delayed stages-modal timer
+    if (this.stageModalTimer) {
+        this.stageModalTimer.active = false;
+        this.stageModalTimer.t = 0;
     }
+};
 
-    resetAll() {
-        this.rings = [];
-        this.addRing(); // ring 0 only
-        this.rings[0].progress = 0;
-        this.rings[0].solid = false;
-        this.rings[0].multAverage = null;
+///////////////////////////////////////////////////////
+// Run-complete animations (flash + shrink)
+///////////////////////////////////////////////////////
 
-        this.totalUnits = 0;
-        this.lastTime = performance.now();
-        this.lastDt = 0;
-        this.loopRate0 = 0;
+CirclesGame.prototype.startRunCompleteFlash = function () {
+    // Always use the current stage’s angle
+    const angle = this.getStageAngle(this.activeStageIndex);
 
-        this.loopThreshold = this.baseLoopThreshold;
-        this.multScale = this.baseMultScale;
-        this.upgradeLevels = [0, 0, 0, 0];
+    this.runCompleteFlash = {
+        active: true,
+        timer: 0,
+        duration: 1.5,
+        holdTime: 1.5,
+        targetAngle: angle,
+        startedShrink: false
+    };
 
-        this.winState.active = false;
-        this.winState.timer = 0;
-        this.lastTopDigit = null;
+    this.runCompleteAnim = {
+        active: false,
+        t: 0,
+        duration: 1.2,
+        angle: angle,
+        targetOffset: 0,
+        targetRadiusScale: STAGE_SPHERE_RADIUS_FACTOR
+    };
 
-        // Reset speed scale as well
-        this.speedScale = 1.0;
-    }
+    this.completedSphereStatic = false;
+};
 
-    startWinAnimation() {
-        this.winState.active = true;
-        this.winState.timer = 0;
-    }
+CirclesGame.prototype.startRunCompleteAnim = function () {
+    // Always use the current stage’s angle
+    const angle = this.getStageAngle(this.activeStageIndex);
 
-    markGameCompleted() {
-        if (!this.devUnlocked) {
-            this.devUnlocked = true;
-            // Persist this so dev tools stay unlocked across reloads.
-            this.saveLocal();
-        }
-    }
+    this.runCompleteAnim = {
+        active: true,
+        t: 0,
+        duration: this.runCompleteAnim && this.runCompleteAnim.duration
+            ? this.runCompleteAnim.duration
+            : 1.2,
+        angle: angle,
+        targetOffset: 0,
+        targetRadiusScale: this.runCompleteAnim && this.runCompleteAnim.targetRadiusScale
+            ? this.runCompleteAnim.targetRadiusScale
+            : STAGE_SPHERE_RADIUS_FACTOR
+    };
 
-    //////////////////////////////////////////////////////
-    // Integer <-> rings mapping
-    //////////////////////////////////////////////////////
+    this.completedSphereStatic = false;
+};
 
-    // Rebuild rings[1..] from the current totalUnits using current loopThreshold.
-    // We do not cap the number of rings here; visually we will only
-    // place the first MAX_SLOTS of them on the sphere.
-    rebuildFromTotal() {
-        this.ensureRings(1);
+CirclesGame.prototype.startWinAnimation = function () {
+    this.winState.active = true;
+    this.winState.timer = 0;
+};
 
-        let units = this.totalUnits;
-        let level = 1;
-
-        while (units > 0) {
-            this.ensureRings(level + 1);
-            const ring = this.rings[level];
-
-            const digit = units % this.loopThreshold;
-            const carry = Math.floor(units / this.loopThreshold);
-
-            ring.progress = digit;
-            ring.ticks = carry;
-
-            units = carry;
-            level += 1;
-        }
-
-        // Zero out any higher rings beyond the highest used.
-        for (let i = level; i < this.rings.length; i++) {
-            const ring = this.rings[i];
-            ring.progress = 0;
-            ring.ticks = 0;
-            ring.solid = false;
-            ring.multAverage = null;
-        }
-    }
-
-    getTotalUnits() {
-        return this.totalUnits;
-    }
-
-    spend(amount) {
-        amount = Math.floor(Math.max(0, amount));
-        if (amount <= 0) {
-            return false;
-        }
-
-        if (this.totalUnits < amount) {
-            return false;
-        }
-
-        this.totalUnits -= amount;
-        this.rebuildFromTotal();
-        return true;
-    }
-
-    //////////////////////////////////////////////////////
-    // Core loop
-    //////////////////////////////////////////////////////
-
-    loop(t) {
-        const dt = Math.min((t - this.lastTime) / 1000, 0.2);
-        this.lastTime = t;
-        this.lastDt = dt;
-
-        this.update(dt);
-        this.draw();
-        this.updateInfo();
-
-        requestAnimationFrame((nt) => this.loop(nt));
-    }
-
-    update(dt) {
-        // If we are in a win animation, advance it and freeze logic.
-        if (this.winState.active) {
-            this.winState.timer += dt;
-            if (this.winState.timer >= this.winState.duration) {
-                this.winState.active = false;
-                this.resetAll();
-            }
-            return;
-        }
-
-        const r0 = this.rings[0];
-
-        // Recompute parameters from upgrades
-        const newThreshold = this.computeLoopThreshold();
-        if (newThreshold !== this.loopThreshold) {
-            const oldThreshold = this.loopThreshold;
-            if (oldThreshold > 0) {
-                const ratio = newThreshold / oldThreshold;
-                r0.progress *= ratio;
-            }
-
-            while (r0.progress >= newThreshold) {
-                r0.progress -= newThreshold;
-                this.totalUnits += 1;
-            }
-
-            this.loopThreshold = newThreshold;
-            this.rebuildFromTotal();
-
-            // Reset tracking so threshold changes do not falsely trigger a win.
-            this.lastTopDigit = null;
-        }
-
-        this.multScale = this.computeMultScale();
-
-        // Base rate for ring 0, then apply global speed scale.
-        const baseRate0Unscaled = this.computeBaseRate();
-        const baseRate0 = baseRate0Unscaled * this.speedScale;
-
-        // Multiplier from higher rings based on their *current* progress.
-        // mult_total = Π_{i>=1, ring exists} sqrt( multScale * (progress_i + 1) )
-        let totalMult = 1;
-        for (let i = 1; i < this.rings.length; i++) {
-            const ring = this.rings[i];
-            if (!ring.exists()) {
-                continue;
-            }
-            const term = this.multScale * (ring.progress + 1);
-            totalMult *= Math.sqrt(Math.max(0, term));
-        }
-
-        const speed0 = baseRate0 * totalMult;
-
-        // Loops per second of ring 0, used later for "solid loop" rendering.
-        this.loopRate0 = (this.loopThreshold > 0)
-            ? speed0 / this.loopThreshold
-            : 0;
-
-        // Advance bottom ring's fractional progress over time.
-        r0.progress += speed0 * dt;
-
-        // Convert overshoot into integer completions in one step
-        // instead of looping one-by-one (avoids lag when very fast).
-        if (this.loopThreshold > 0) {
-            const loops = Math.floor(r0.progress / this.loopThreshold);
-            if (loops > 0) {
-                r0.progress -= loops * this.loopThreshold;
-                this.totalUnits += loops;
-            }
-        }
-
-        // Now that totalUnits changed, rebuild rings[1..] from it.
-        this.rebuildFromTotal();
-
-        // Win detection based on the 12th ring (index 11) completing a loop.
-        if (this.rings.length >= 12) {
-            const topRing = this.rings[11];
-            const digit = topRing.progress;
-
-            if (this.lastTopDigit !== null &&
-                this.lastTopDigit > 0 &&
-                digit === 0 &&
-                !this.winState.active) {
-
-                // Mark that the player has legitimately completed the game.
-                this.markGameCompleted();
-
-                if (typeof this.onWin === "function") {
-                    this.onWin();
-                } else {
-                    this.startWinAnimation();
-                }
-            }
-
-            this.lastTopDigit = digit;
-        } else {
-            this.lastTopDigit = null;
-        }
-
-        // Auto-save current state
+CirclesGame.prototype.markGameCompleted = function () {
+    if (!this.devUnlocked) {
+        this.devUnlocked = true;
+        // Persist this so dev tools stay unlocked across reloads.
         this.saveLocal();
     }
+};
 
-    //////////////////////////////////////////////////////
-    // Keyboard controls
-    //////////////////////////////////////////////////////
+///////////////////////////////////////////////////////
+// Integer <-> rings mapping
+///////////////////////////////////////////////////////
 
-    handleKey(e) {
-        if (e.repeat) {
-            return;
+CirclesGame.prototype.rebuildFromTotal = function () {
+    this.ensureRings(1);
+
+    let units = this.totalUnits;
+    let level = 1;
+
+    while (units > 0) {
+        this.ensureRings(level + 1);
+        const ring = this.rings[level];
+
+        const digit = units % this.loopThreshold;
+        const carry = Math.floor(units / this.loopThreshold);
+
+        ring.progress = digit;
+        ring.ticks = carry;
+
+        units = carry;
+        level += 1;
+    }
+
+    // Zero out any higher rings beyond the highest used.
+    for (let i = level; i < this.rings.length; i++) {
+        const ring = this.rings[i];
+        ring.progress = 0;
+        ring.ticks = 0;
+        ring.solid = false;
+        ring.multAverage = null;
+    }
+};
+
+///////////////////////////////////////////////////////
+// Stages meta helpers (UI wiring lives in render-stages.js)
+///////////////////////////////////////////////////////
+
+// Advance the delayed stages-modal timer, if active.
+CirclesGame.prototype.updateStageModalTimer = function (dt) {
+    if (!this.stageModalTimer || !this.stageModalTimer.active) {
+        return;
+    }
+
+    this.stageModalTimer.t += dt;
+    if (this.stageModalTimer.t >= this.stageModalTimer.delay) {
+        this.stageModalTimer.active = false;
+        this.stageModalTimer.t = 0;
+
+        // Only open the modal if the UI is wired
+        if (typeof this.showStagesModal === "function") {
+            this.showStagesModal();
+        }
+    }
+};
+
+// Called whenever a run is fully completed (top ring wraps from >0 to 0).
+// Marks the current stage as completed and starts the delayed modal if needed.
+CirclesGame.prototype.handleStageCompletion = function () {
+    const count = this.stageCount || 9;
+
+    let idx = this.activeStageIndex;
+    if (idx == null || idx < 0 || idx >= count) {
+        idx = 0;
+        this.activeStageIndex = 0;
+    }
+
+    const wasCompleted = !!this.stageCompleted[idx];
+    if (!wasCompleted) {
+        this.stageCompleted[idx] = true;
+    }
+
+    // Stable orbit angle for this stage
+    const angle = this.getStageAngle(idx);
+
+    // Pick a color for this stage
+    let color = "#ffffff";
+    if (typeof this.ringColor === "function") {
+        color = this.ringColor(idx);
+    }
+
+    const loopsAtCompletion = this.totalUnits;
+
+    if (!this.completedStageSpheres) {
+        this.completedStageSpheres = [];
+    }
+
+    const existing = this.completedStageSpheres.find(s => s.stage === idx);
+    if (existing) {
+        existing.angle = angle;
+        existing.color = color;
+        existing.loops = loopsAtCompletion;
+    } else {
+        this.completedStageSpheres.push({
+            stage: idx,
+            angle: angle,
+            color: color,
+            loops: loopsAtCompletion
+        });
+    }
+
+    this.saveLocal();
+
+    if (typeof this.updateStagesToggleVisibility === "function") {
+        this.updateStagesToggleVisibility();
+    }
+
+    const isFirstStage = idx === 0;
+    if (isFirstStage && !wasCompleted) {
+        if (!this.stageModalTimer) {
+            this.stageModalTimer = { active: false, t: 0, delay: 3.0 };
+        }
+        this.stageModalTimer.active = true;
+        this.stageModalTimer.t = 0;
+    }
+};
+
+CirclesGame.prototype.getStageAngle = function (stageIndex) {
+    const count = this.stageCount - 1 || 8;
+    let idx = stageIndex;
+
+    if (idx == null || idx < 0 || idx >= count) {
+        idx = 0;
+    }
+
+    // Evenly spaced around the circle
+    return (idx / count) * Math.PI * 2;
+};
+
+///////////////////////////////////////////////////////
+// Basic getters / spend
+///////////////////////////////////////////////////////
+
+CirclesGame.prototype.getTotalUnits = function () {
+    return this.totalUnits;
+};
+
+CirclesGame.prototype.spend = function (amount) {
+    amount = Math.floor(Math.max(0, amount));
+    if (amount <= 0) {
+        return false;
+    }
+
+    if (this.totalUnits < amount) {
+        return false;
+    }
+
+    this.totalUnits -= amount;
+    this.rebuildFromTotal();
+    return true;
+};
+
+///////////////////////////////////////////////////////
+// Core loop
+///////////////////////////////////////////////////////
+
+CirclesGame.prototype.loop = function (t) {
+    const dt = Math.min((t - this.lastTime) / 1000, 0.2);
+    this.lastTime = t;
+    this.lastDt = dt;
+
+    this.update(dt);
+    this.draw();
+    this.updateInfo();
+
+    requestAnimationFrame((nt) => this.loop(nt));
+};
+
+CirclesGame.prototype.update = function (dt) {
+    // Always tick the delayed stages-modal timer
+    this.updateStageModalTimer(dt);
+
+    // Full win animation: freeze logic while playing
+    if (this.winState.active) {
+        this.winState.timer += dt;
+        if (this.winState.timer >= this.winState.duration) {
+            this.winState.active = false;
+            this.resetAll();
+        }
+        return;
+    }
+
+    const flash = this.runCompleteFlash;
+    const shrink = this.runCompleteAnim;
+
+    // Run-complete flash phase: pulse active, logic frozen
+    if (flash && flash.active) {
+        flash.timer += dt;
+
+        // After holdTime, start the sphere shrink/move exactly once
+        if (!flash.startedShrink && shrink && flash.timer >= flash.holdTime) {
+            flash.startedShrink = true;
+            this.startRunCompleteAnim(flash.targetAngle);
         }
 
-        // Dev tools only available once the player has beaten the game at least once.
-        if (!this.devUnlocked) {
-            return;
+        // While flash is active, advance shrink if it has started
+        if (shrink && shrink.active) {
+            shrink.t += dt;
+            if (shrink.t >= shrink.duration) {
+                shrink.t = shrink.duration;
+                shrink.active = false;
+                this.completedSphereStatic = true;
+            }
         }
 
-        if (e.key === "ArrowUp") {
-            // Double base speed
-            this.speedScale *= 2;
-        } else if (e.key === "ArrowDown") {
-            // Half base speed
-            this.speedScale /= 2;
-        } else if (e.key === "Enter") {
-            // Trigger an instant win
-            if (!this.winState.active) {
+        // End the flash after its full duration
+        if (flash.timer >= flash.duration) {
+            flash.active = false;
+        }
+
+        // During flash we do not advance base game logic
+        return;
+    }
+
+    // After the flash is done, the shrink might still be running
+    if (shrink && shrink.active) {
+        shrink.t += dt;
+        if (shrink.t >= shrink.duration) {
+            shrink.t = shrink.duration;
+            shrink.active = false;
+            this.completedSphereStatic = true;
+        }
+        // Still in end-of-run animation, no game logic
+        return;
+    }
+
+    // Once the sphere is parked, stop logic until a new run is started
+    if (this.completedSphereStatic) {
+        return;
+    }
+
+    const r0 = this.rings[0];
+
+    // Recompute parameters from upgrades
+    const newThreshold = this.computeLoopThreshold();
+    if (newThreshold !== this.loopThreshold) {
+        const oldThreshold = this.loopThreshold;
+        if (oldThreshold > 0) {
+            const ratio = newThreshold / oldThreshold;
+            r0.progress *= ratio;
+        }
+
+        while (r0.progress >= newThreshold) {
+            r0.progress -= newThreshold;
+            this.totalUnits += 1;
+        }
+
+        this.loopThreshold = newThreshold;
+        this.rebuildFromTotal();
+
+        // Reset tracking so threshold changes do not falsely trigger a win.
+        this.lastTopDigit = null;
+    }
+
+    this.multScale = this.computeMultScale();
+
+    // Base rate for ring 0, then apply global speed scale.
+    const baseRate0Unscaled = this.computeBaseRate();
+    const baseRate0 = baseRate0Unscaled * this.speedScale;
+
+    // Multiplier from higher rings based on their *current* progress.
+    // mult_total = Π_{i>=1, ring exists} sqrt( multScale * (progress_i + 1) )
+    let totalMult = 1;
+    for (let i = 1; i < this.rings.length; i++) {
+        const ring = this.rings[i];
+        if (!ring.exists()) {
+            continue;
+        }
+        const term = this.multScale * (ring.progress + 1);
+        totalMult *= Math.sqrt(Math.max(0, term));
+    }
+
+    const speed0 = baseRate0 * totalMult;
+
+    // Loops per second of ring 0, used later for "solid loop" rendering.
+    this.loopRate0 = (this.loopThreshold > 0)
+        ? speed0 / this.loopThreshold
+        : 0;
+
+    // Advance bottom ring's fractional progress over time.
+    r0.progress += speed0 * dt;
+
+    // Convert overshoot into integer completions in one step
+    // instead of looping one-by-one (avoids lag when very fast).
+    if (this.loopThreshold > 0) {
+        const loops = Math.floor(r0.progress / this.loopThreshold);
+        if (loops > 0) {
+            r0.progress -= loops * this.loopThreshold;
+            this.totalUnits += loops;
+        }
+    }
+
+    // Now that totalUnits changed, rebuild rings[1..] from it.
+    this.rebuildFromTotal();
+
+    // Run completion detection based on the 12th ring (index 11) completing a loop.
+    if (this.rings.length >= 12) {
+        const topRing = this.rings[11];
+        const digit = topRing.progress;
+
+        if (this.lastTopDigit !== null &&
+            this.lastTopDigit > 0 &&
+            digit === 0 &&
+            !this.winState.active &&
+            !this.runCompleteAnim.active &&
+            !this.completedSphereStatic) {
+
+            // Stage bookkeeping
+            if (typeof this.handleStageCompletion === "function") {
+                this.handleStageCompletion();
+            }
+
+            // Prefer a run-complete handler if present (meta layer),
+            // otherwise fall back to the old "final win" behavior.
+            if (typeof this.onRunComplete === "function") {
+                this.onRunComplete();
+            } else {
+                this.markGameCompleted();
                 if (typeof this.onWin === "function") {
                     this.onWin();
                 } else {
@@ -357,105 +600,181 @@ class CirclesGame {
                 }
             }
         }
+
+        this.lastTopDigit = digit;
+    } else {
+        this.lastTopDigit = null;
     }
 
-    //////////////////////////////////////////////////////
-    // Resize
-    //////////////////////////////////////////////////////
-    resize() {
-        const dpr = window.devicePixelRatio || 1;
+    // Auto-save current state
+    this.saveLocal();
+};
 
-        // Use the *current* CSS size of the canvas
-        const targetWidth = this.canvas.clientWidth;
-        const targetHeight = this.canvas.clientHeight;
+///////////////////////////////////////////////////////
+// Keyboard controls
+///////////////////////////////////////////////////////
 
-        // Do NOT set style.width/height here.
-        // Let CSS "width: 100%; height: 100%" control the layout.
-
-        // Only update the backing buffer if needed
-        const newWidth = targetWidth * dpr;
-        const newHeight = targetHeight * dpr;
-
-        if (this.canvas.width !== newWidth || this.canvas.height !== newHeight) {
-            this.canvas.width = newWidth;
-            this.canvas.height = newHeight;
-
-            // Logical units are CSS pixels
-            this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-            // Clear with logical size
-            this.ctx.clearRect(0, 0, targetWidth, targetHeight);
-        }
+CirclesGame.prototype.handleKey = function (e) {
+    if (e.repeat) {
+        return;
     }
 
-    //////////////////////////////////////////////////////
-    // SAVE / LOAD (localStorage)
-    //////////////////////////////////////////////////////
-
-    serializeState() {
-        return {
-            totalUnits: this.totalUnits,
-            loopThreshold: this.loopThreshold,
-            multScale: this.multScale,
-            upgradeLevels: this.upgradeLevels.slice(),
-            rings: this.rings.map(r => ({
-                progress: r.progress,
-                ticks: r.ticks,
-                solid: r.solid
-            })),
-            devUnlocked: this.devUnlocked
-        };
+    // Dev tools only available once the player has beaten the game at least once.
+    if (!this.devUnlocked) {
+        return;
     }
 
-    applyState(s) {
-        if (!s) {
-            return;
-        }
-
-        this.totalUnits = s.totalUnits ?? 0;
-        this.loopThreshold = s.loopThreshold ?? LOOP_THRESHOLD;
-        this.multScale = s.multScale ?? 1.0;
-        this.upgradeLevels = s.upgradeLevels ?? [0, 0, 0, 0];
-        this.devUnlocked = !!s.devUnlocked;
-
-        this.rings = [];
-        this.addRing();
-
-        if (s.rings && s.rings.length > 1) {
-            for (let i = 1; i < s.rings.length; i++) {
-                this.addRing();
-            }
-            for (let i = 0; i < s.rings.length; i++) {
-                this.rings[i].progress = s.rings[i].progress;
-                this.rings[i].ticks = s.rings[i].ticks;
-                this.rings[i].solid = s.rings[i].solid;
+    if (e.key === "ArrowUp") {
+        // Double base speed
+        this.speedScale *= 2;
+    } else if (e.key === "ArrowDown") {
+        // Half base speed
+        this.speedScale /= 2;
+    } else if (e.key === "Enter") {
+        // Trigger an instant win
+        if (!this.winState.active) {
+            if (typeof this.onWin === "function") {
+                this.onWin();
+            } else {
+                this.startWinAnimation();
             }
         }
+    }
+};
 
-        this.rebuildFromTotal();
+///////////////////////////////////////////////////////
+// Resize
+///////////////////////////////////////////////////////
+
+CirclesGame.prototype.resize = function () {
+    const dpr = window.devicePixelRatio || 1;
+
+    // Use the *current* CSS size of the canvas
+    const targetWidth = this.canvas.clientWidth;
+    const targetHeight = this.canvas.clientHeight;
+
+    // Do NOT set style.width/height here.
+    // Let CSS "width: 100%; height: 100%" control the layout.
+
+    // Only update the backing buffer if needed
+    const newWidth = targetWidth * dpr;
+    const newHeight = targetHeight * dpr;
+
+    if (this.canvas.width !== newWidth || this.canvas.height !== newHeight) {
+        this.canvas.width = newWidth;
+        this.canvas.height = newHeight;
+
+        // Logical units are CSS pixels
+        this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+        // Clear with logical size
+        this.ctx.clearRect(0, 0, targetWidth, targetHeight);
+    }
+};
+
+///////////////////////////////////////////////////////
+// SAVE / LOAD (localStorage)
+///////////////////////////////////////////////////////
+
+CirclesGame.prototype.serializeState = function () {
+    return {
+        totalUnits: this.totalUnits,
+        loopThreshold: this.loopThreshold,
+        multScale: this.multScale,
+        upgradeLevels: this.upgradeLevels.slice(),
+        rings: this.rings.map(r => ({
+            progress: r.progress,
+            ticks: r.ticks,
+            solid: r.solid
+        })),
+        devUnlocked: this.devUnlocked,
+        stageCompleted: this.stageCompleted.slice(),
+        activeStageIndex: this.activeStageIndex,
+        completedStageSpheres: (this.completedStageSpheres || []).map(s => ({
+            stage: s.stage,
+            angle: s.angle,
+            color: s.color,
+            loops: s.loops
+        }))
+    };
+};
+
+CirclesGame.prototype.applyState = function (s) {
+    if (!s) {
+        return;
     }
 
-    saveLocal() {
-        try {
-            const json = JSON.stringify(this.serializeState());
-            localStorage.setItem("spheres-save", json);
-        } catch (e) {
-            console.warn("Failed to save", e);
+    this.totalUnits = s.totalUnits ?? 0;
+    this.loopThreshold = s.loopThreshold ?? LOOP_THRESHOLD;
+    this.multScale = s.multScale ?? 1.0;
+    this.upgradeLevels = s.upgradeLevels ?? [0, 0, 0, 0];
+    this.devUnlocked = !!s.devUnlocked;
+
+    // Restore or initialize stages
+    this.stageCount = this.stageCount || 9;
+    const defaultStages = new Array(this.stageCount).fill(false);
+    this.stageCompleted = Array.isArray(s.stageCompleted)
+        ? s.stageCompleted.slice(0, this.stageCount).concat(
+            new Array(Math.max(0, this.stageCount - s.stageCompleted.length)).fill(false)
+        )
+        : defaultStages;
+    this.activeStageIndex = (typeof s.activeStageIndex === "number")
+        ? s.activeStageIndex
+        : 0;
+
+    // Restore trophy spheres
+    if (Array.isArray(s.completedStageSpheres)) {
+        this.completedStageSpheres = s.completedStageSpheres.map(o => ({
+            stage: o.stage,
+            angle: o.angle,
+            color: o.color,
+            loops: o.loops
+        }));
+    } else {
+        this.completedStageSpheres = [];
+    }
+
+    this.rings = [];
+    this.addRing();
+
+    if (s.rings && s.rings.length > 1) {
+        for (let i = 1; i < s.rings.length; i++) {
+            this.addRing();
+        }
+        for (let i = 0; i < s.rings.length; i++) {
+            this.rings[i].progress = s.rings[i].progress;
+            this.rings[i].ticks = s.rings[i].ticks;
+            this.rings[i].solid = s.rings[i].solid;
         }
     }
 
-    loadLocal() {
-        const raw = localStorage.getItem("spheres-save");
-        if (!raw) {
-            return false;
-        }
-        try {
-            const obj = JSON.parse(raw);
-            this.applyState(obj);
-            return true;
-        } catch (e) {
-            console.warn("Failed to load save", e);
-            return false;
-        }
+    this.rebuildFromTotal();
+
+    if (typeof this.updateStagesToggleVisibility === "function") {
+        this.updateStagesToggleVisibility();
     }
-}
+};
+
+CirclesGame.prototype.saveLocal = function () {
+    try {
+        const json = JSON.stringify(this.serializeState());
+        localStorage.setItem("spheres-save", json);
+    } catch (e) {
+        console.warn("Failed to save", e);
+    }
+};
+
+CirclesGame.prototype.loadLocal = function () {
+    const raw = localStorage.getItem("spheres-save");
+    if (!raw) {
+        return false;
+    }
+    try {
+        const obj = JSON.parse(raw);
+        this.applyState(obj);
+        return true;
+    } catch (e) {
+        console.warn("Failed to load save", e);
+        return false;
+    }
+};

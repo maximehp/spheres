@@ -16,6 +16,10 @@ CirclesGame.prototype.drawUpgradeButtons = function (ctx, cx, cySphere, sphereRa
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
 
+    const globalLock =
+        (this.runCompleteAnim && this.runCompleteAnim.active) ||
+        this.completedSphereStatic;
+
     for (let i = 0; i < 4; i++) {
         const pos = positions[i];
 
@@ -29,10 +33,14 @@ CirclesGame.prototype.drawUpgradeButtons = function (ctx, cx, cySphere, sphereRa
                 isMax = true;
             }
         } else if (i === 3) {
-            // boost others max 2 levels
             if (this.upgradeLevels[3] >= 2) {
                 isMax = true;
             }
+        }
+
+        // Once the run is complete or shrinking, all upgrades show as MAX
+        if (globalLock) {
+            isMax = true;
         }
 
         const cost = isMax ? 0 : this.getUpgradeCost(i);
