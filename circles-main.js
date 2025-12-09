@@ -25,7 +25,20 @@ window.addEventListener("DOMContentLoaded", () => {
     const resetBtn = document.getElementById("resetBtn");
     const closeBtn = document.getElementById("closeAbout");
 
-    // Win handler: trigger the win animation
+    const stagesModal = document.getElementById("stagesModal");
+    const stagesList = document.getElementById("stagesList");
+    const closeStages = document.getElementById("closeStages");
+    const stagesToggleBtn = document.getElementById("stagesToggleBtn");
+
+    game.attachStagesUI(stagesModal, stagesList, closeStages, stagesToggleBtn);
+
+    game.onRunComplete = function () {
+        const angle = -Math.PI / 3;  // where this finished sphere should go
+        game.startRunCompleteFlash(angle);
+    };
+
+    // Win handler: trigger the old final win animation (for now unused
+    // once onRunComplete is wired in, but we keep it as a fallback).
     game.onWin = function () {
         game.startWinAnimation();
     };
@@ -87,47 +100,6 @@ window.addEventListener("DOMContentLoaded", () => {
             console.error(e);
         }
     });
-
-    //////////////////////////////////////////////////////
-    // MUSIC — SoundCloud Mini Player (hidden)
-    //////////////////////////////////////////////////////
-
-    const scPlayer = document.getElementById("scPlayer");
-
-    // Put the URL into the iframe safely
-    scPlayer.src =
-        "https://w.soundcloud.com/player/?url=" +
-        encodeURIComponent("https://soundcloud.com/boo-moo-shoo/my-lofi-collection-1-hour-of-aesthetic-calm-lofi-music-free-no-copyright-music") +
-        "&auto_play=false&hide_related=true&show_comments=false&show_reposts=false&visual=false";
-
-    const musicBtn = document.getElementById("musicBtn");
-    let musicOn = false;
-
-    function updateMusicButton() {
-        musicBtn.textContent = musicOn ? "♫" : "♩";
-    }
-
-    // API interface to the SoundCloud iframe
-    // Sends commands through postMessage()
-    function scCommand(cmd) {
-        scPlayer.contentWindow.postMessage(JSON.stringify(cmd), "*");
-    }
-
-    musicBtn.addEventListener("click", () => {
-        if (!musicOn) {
-            // Play
-            scCommand({ method: "play" });
-            musicOn = true;
-        } else {
-            // Pause
-            scCommand({ method: "pause" });
-            musicOn = false;
-        }
-        updateMusicButton();
-    });
-
-    // Set initial icon
-    updateMusicButton();
 
     // For console
     window.circlesGame = game;

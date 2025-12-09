@@ -61,7 +61,7 @@ body {
 /* Single simple control in corner */
 .corner-btn {
   position: absolute;
-  padding: 10px 18px;
+  padding: 8px 16px;
   border-radius: 100%;
   border: none;
   background: rgba(8, 16, 48, 0.86);
@@ -119,7 +119,6 @@ body {
 .modal-content {
   background: rgba(18,22,40,0.95);
   padding: 40px 60px;
-  border-radius: 20px;
   text-align: center;
   box-shadow: 0 0 20px rgba(0,0,0,0.45);
 }
@@ -142,7 +141,6 @@ body {
   padding: 10px 30px;
   margin: 10px;
   border: none;
-  border-radius: 12px;
   cursor: pointer;
 }
 
@@ -171,7 +169,7 @@ body {
     left: 16px;
     bottom: 16px;
     width: 150px;
-    height: 28px;
+    height: 40px;
     background: rgba(8, 16, 48, 0.86);
     border-radius: 18px;
     box-shadow: 0 0 12px rgba(0,0,0,0.5);
@@ -185,9 +183,9 @@ body {
 
 .music-slider-track {
     flex: 1;
-    height: 6px;
+    height: 8px;
     background: rgba(255,255,255,0.15);
-    border-radius: 3px;
+    border-radius: 4px;
     position: relative;
     overflow: hidden;
 }
@@ -217,11 +215,12 @@ body {
     justify-content: center;
     font-size: 18px;
     box-shadow: 0 0 12px rgba(0,0,0,0.5);
-    transition: background 0.12s ease;
+    transition: background 0.12s ease, transform 0.08s ease, box-shadow 0.12s ease;
 }
 
 .music-slider-thumb:hover {
-    background: rgba(40,64,124,0.96);
+    background: rgba(40, 64, 124, 0.96);
+    box-shadow: 0 0 18px rgba(100, 140, 255, 0.55);
 }
 
 .music-muted {
@@ -239,3 +238,118 @@ body {
     transform: translateY(-50%) rotate(-20deg);
     pointer-events: none;
 }
+
+.modal.hidden {
+  display: none;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #f6f6ff;
+  z-index: 20;
+}
+
+/* About panel styled like the tooltip card */
+.modal-content.about-panel {
+  background: rgba(10, 10, 20, 0.95);
+  padding: 28px 32px;
+  max-width: 520px;
+  width: 90%;
+  box-shadow: 0 0 22px rgba(0, 0, 0, 0.6);
+  border: 2px solid rgba(200, 230, 255, 0.98);
+  text-align: left;
+  font-family: "Blockletter", sans-serif;
+}
+
+/* Title and text hierarchy similar to tooltip aesthetics */
+.about-title {
+  font-size: 32px;
+  margin-bottom: 10px;
+  letter-spacing: 1px;
+  color: #f6f6ff;
+}
+
+.about-subtitle {
+  font-size: 18px;
+  margin-bottom: 12px;
+  color: #d0d0ff;
+}
+
+.about-text {
+  font-size: 16px;
+  line-height: 1.35;
+  margin-bottom: 10px;
+  color: #f6f6ff;
+}
+
+.about-music {
+  font-size: 14px;
+  line-height: 1.3;
+  margin-bottom: 18px;
+  color: #d0d0ff;
+}
+
+.about-music a {
+  color: #ffd2ff;
+  text-decoration: underline;
+}
+
+.about-music a:hover {
+  color: #ffffff;
+}
+
+/* Buttons row layout */
+.about-buttons-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 4px;
+}
+
+/* Button base style, matching tooltip border / color logic */
+.modal-reset-btn,
+.modal-close-btn,
+.about-btn {
+  font-family: "Blockletter", sans-serif;
+  font-size: 18px;
+  padding: 8px 20px;
+  border: 1px solid rgba(200, 230, 255, 0.8);
+  cursor: pointer;
+  background: rgba(15, 20, 40, 0.98);
+  color: #f6f6ff;
+  transition: background 0.12s ease, box-shadow 0.12s ease, transform 0.08s ease;
+}
+
+.about-btn:hover {
+  background: rgba(40, 64, 124, 0.96);
+  box-shadow: 0 0 14px rgba(100, 140, 255, 0.7);
+}
+
+.about-btn:active {
+  transform: translateY(1px);
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.7);
+}
+
+/* Variant buttons */
+.about-btn.primary {
+  background: rgba(40, 64, 124, 0.96);
+  border-color: rgba(200, 230, 255, 0.95);
+}
+
+.about-btn.danger {
+  background: rgba(120, 30, 40, 0.95);
+  border-color: rgba(255, 140, 160, 0.9);
+}
+
+.about-btn.danger:hover {
+  background: rgba(160, 40, 52, 0.98);
+  box-shadow: 0 0 16px rgba(255, 140, 160, 0.8);
+}
+

@@ -36,20 +36,39 @@
 
     <!-- ABOUT MODAL -->
     <div id="aboutModal" class="modal hidden">
-        <div class="modal-content">
-            <h1>About</h1>
+        <div class="modal-content about-panel">
+            <h1 class="about-title">ABOUT</h1>
 
-            <p>This project was inspired by<br><strong>Circles by FlameMasterNxf</strong>.</p>
-            <p>Made for an English class in college.</p>
-            <p>Used Vanta.js for the background and three.js for the sphere rendering.</p>
+            <p class="about-subtitle">
+                Inspired by <strong>Circles</strong> by <strong>FlameMasterNxf</strong>.
+            </p>
 
-            <div style="margin-top:15px;">
-                <button id="exportBtn" class="modal-reset-btn" style="background:#4a89ff;">Export Save</button>
-                <button id="importBtn" class="modal-reset-btn" style="background:#4a89ff;">Import Save</button>
+            <p class="about-text">
+                Designed and coded by Maxime Hendryx-Parker as a project
+                for a college English class.
+            </p>
+
+            <p class="about-music">
+                Background music:
+                <a
+                    href="https://soundcloud.com/boo-moo-shoo/my-lofi-collection-1-hour-of-aesthetic-calm-lofi-music-free-no-copyright-music"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                >
+                    “My Lofi Collection” by Boo Moo Shoo
+                </a>
+                on SoundCloud.
+            </p>
+
+            <div class="about-buttons-row">
+                <button id="exportBtn" class="modal-reset-btn about-btn">Export Save</button>
+                <button id="importBtn" class="modal-reset-btn about-btn">Import Save</button>
             </div>
 
-            <button id="resetBtn" class="modal-reset-btn">Reset Progress</button>
-            <button id="closeAbout" class="modal-close-btn">Close</button>
+            <div class="about-buttons-row">
+                <button id="resetBtn" class="modal-reset-btn about-btn danger">Reset Progress</button>
+                <button id="closeAbout" class="modal-close-btn about-btn primary">Close</button>
+            </div>
         </div>
     </div>
 
@@ -69,6 +88,7 @@
     <!-- Rendering modules -->
     <script src="render/render-sphere.js"></script>
     <script src="render/render-upgrades.js"></script>
+    <script src="render/render-stages.js"></script>
     <script src="render/render-main.js"></script>
 
     <!-- Entry point -->

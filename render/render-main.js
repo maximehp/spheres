@@ -1,7 +1,25 @@
 // render-main.js
 
-CirclesGame.prototype.ringColor = function (i) {
-    const palette = [
+CirclesGame.prototype.ringColor = function (ringIndex, stageIndex) {
+    // Default to the current active stage if none provided
+    if (typeof stageIndex !== "number") {
+        stageIndex = (typeof this.activeStageIndex === "number")
+            ? this.activeStageIndex
+            : 0;
+    }
+
+    // If per stage palettes exist, use them
+    if (typeof STAGE_PALETTES !== "undefined" &&
+        Array.isArray(STAGE_PALETTES) &&
+        STAGE_PALETTES[stageIndex] &&
+        STAGE_PALETTES[stageIndex].length > 0) {
+
+        const palette = STAGE_PALETTES[stageIndex];
+        return palette[ringIndex % palette.length];
+    }
+
+    // Fallback global palette
+    const fallback = [
         "#70ffa3",
         "#6ef4ff",
         "#a98bff",
@@ -9,8 +27,44 @@ CirclesGame.prototype.ringColor = function (i) {
         "#ffc857",
         "#f25f5c"
     ];
-    return palette[i % palette.length];
+    return fallback[ringIndex % fallback.length];
 };
+
+CirclesGame.prototype.getRingDisplayMultiplier = function (ringIndex, displayProgress, displayMultScale) {
+    const stageIndex = (typeof this.activeStageIndex === "number") ? this.activeStageIndex : 0;
+
+    // Meta-upgrade: "mult floor" (your slot 3) still applies
+    const hasMultFloor = Array.isArray(this.stagePointLevels) &&
+        this.stagePointLevels[3] > 0;
+
+    let loopsHere = displayProgress + 1;
+
+    if (hasMultFloor && loopsHere < 4) {
+        loopsHere = 4;
+    }
+
+    // Stage 5: no mult bonus from loops
+    // Keep a base multiplier from multScale, but loops should not increase it.
+    if (stageIndex === 5) {
+        loopsHere = 1;
+    }
+
+    // Stage 1: higher rings have reduced contribution
+    // Example: each outer ring is less effective; adjust loops toward 1.
+    if (stageIndex === 1 && ringIndex > 0) {
+        const penaltyPerRing = 0.5; // ring 1 = 50%, ring 2 = 25%, etc
+        const penalty = Math.pow(penaltyPerRing, ringIndex);
+        loopsHere = 1 + (loopsHere - 1) * penalty;
+    }
+
+    const term = displayMultScale * loopsHere;
+    if (term <= 0) {
+        return 1.0;
+    }
+
+    return Math.sqrt(term);
+};
+
 
 CirclesGame.prototype.draw = function () {
     const ctx = this.ctx;
@@ -20,8 +74,8 @@ CirclesGame.prototype.draw = function () {
 
     ctx.clearRect(0, 0, w, h);
 
-    const cx = w / 2;
-    const cy = h / 2;
+    const cxBase = w / 2;
+    const cyBase = h / 2;
 
     const dt = this.lastDt || 0.016;
 
@@ -76,10 +130,10 @@ CirclesGame.prototype.draw = function () {
 
     ctx.lineWidth = 4;
     ctx.strokeStyle = "rgba(0,0,0,0.65)";
-    ctx.strokeText(totalStr, cx, 8);
+    ctx.strokeText(totalStr, cxBase, 8);
 
     ctx.fillStyle = "#ffffff";
-    ctx.fillText(totalStr, cx, 8);
+    ctx.fillText(totalStr, cxBase, 8);
 
     // Scientific notation version under the big number, with threshold + fade
     if (this.sciLabelAlpha == null) {
@@ -107,15 +161,71 @@ CirclesGame.prototype.draw = function () {
 
         ctx.lineWidth = 3;
         ctx.strokeStyle = "rgba(0,0,0," + strokeAlpha + ")";
-        ctx.strokeText("(" + sci + ")", cx, 44);
+        ctx.strokeText("(" + sci + ")", cxBase, 44);
 
         ctx.fillStyle = "rgba(160,160,160," + fillAlpha + ")";
-        ctx.fillText("(" + sci + ")", cx, 44);
+        ctx.fillText("(" + sci + ")", cxBase, 44);
     }
 
-    // Sphere radius; slightly larger now.
-    const sphereRadius = Math.min(w, h) * 0.32;
-    const cySphere = cy + 10;
+    // Base sphere geometry (unanimated)
+    const sphereRadiusBase = Math.min(w, h) * 0.32;
+    const cySphereBase = cyBase + 10;
+
+    // Animated sphere center and radius (for run-complete shrink)
+    let cxSphere = cxBase;
+    let cySphere = cySphereBase;
+    let sphereRadius = sphereRadiusBase;
+
+    const runAnimActive = this.runCompleteAnim && this.runCompleteAnim.active;
+    const flashActive = this.runCompleteFlash && this.runCompleteFlash.active;
+    const runAnimOrStatic = runAnimActive || this.completedSphereStatic || flashActive;
+
+    // Smoothly fade the whole sphere cluster from 1.0 to 0.6
+    // over the course of the shrink animation. Flash alone does not change alpha.
+    let completionAlpha = 1.0;
+    if (this.runCompleteAnim && (this.runCompleteAnim.active || this.completedSphereStatic)) {
+        const anim = this.runCompleteAnim;
+        const fRaw = anim.duration > 0 ? Math.min(anim.t / anim.duration, 1) : 1;
+        const target = 0.6;
+        completionAlpha = 1 - (1 - target) * fRaw; // 1 -> 0.6
+    }
+    this.completionAlpha = completionAlpha;
+
+    // Show the main sphere during play, flash and shrink.
+    // Once the shrink has completed and the sphere is parked,
+    // hide it so only the orbit trophy remains.
+    const showMainSphere =
+        !this.completedSphereStatic || runAnimActive || flashActive;
+
+    // Ellipse quality for latitude arcs:
+    // during shrink, smoothly drop from 64 segments down to 12,
+    // then stay low while the sphere is parked.
+    let ellipseSteps = 48;
+
+    if (this.runCompleteAnim && (this.runCompleteAnim.active || this.runCompleteAnim.t > 0)) {
+        const anim = this.runCompleteAnim;
+        const fRaw = anim.duration > 0 ? anim.t / anim.duration : 1;
+        const f = Math.max(0, Math.min(1, fRaw));
+
+        const baseOffset = sphereRadiusBase * STAGE_ORBIT_RADIUS_FACTOR;
+        const offset = baseOffset * f;
+
+        const angle = anim.angle || this.getStageAngle(this.activeStageIndex);
+        const targetCx = cxBase + Math.cos(angle) * offset;
+        const targetCy = cySphereBase + Math.sin(angle) * offset;
+
+        cxSphere = cxBase + (targetCx - cxBase) * f;
+        cySphere = cySphereBase + (targetCy - cySphereBase) * f;
+
+        const minRadius = sphereRadiusBase * (anim.targetRadiusScale || STAGE_SPHERE_RADIUS_FACTOR);
+        sphereRadius = sphereRadiusBase + (minRadius - sphereRadiusBase) * f;
+
+        const maxSteps = 36;
+        const minSteps = 10;
+        ellipseSteps = Math.round(maxSteps - (maxSteps - minSteps) * f);
+    } else if (this.completedSphereStatic) {
+        ellipseSteps = 12;
+    }
 
     // Collect indices of rings that exist (for animation, treat rings that used to
     // exist OR currently exist as visible).
@@ -130,21 +240,38 @@ CirclesGame.prototype.draw = function () {
         }
     }
 
-    const usedSlots = Math.min(visibleIndices.length, MAX_SLOTS);
+    const stageSlots = this.getStageLoopSlots(this.activeStageIndex);
+    const usedSlots = Math.min(visibleIndices.length, stageSlots);
 
-    // Sphere opacity: 0 at zero, up to 1 when 16 slots filled
+    // Sphere opacity: 0 at zero, up to 1 when all slots filled
     const opacityFactor = usedSlots > 0
-        ? (usedSlots / MAX_SLOTS)
+        ? (usedSlots / stageSlots)
         : 0.0;
 
-    this.drawSphereBackground(ctx, cx, cySphere, sphereRadius, opacityFactor);
+    // ===========================
+    // TROPHY SPHERES (independent alpha)
+    // ===========================
+    this.drawCompletedStageSpheres(ctx, cxBase, cySphereBase, sphereRadiusBase, true);
 
-    if (usedSlots === 0) {
-        // Win overlay can still run, but there is nothing to draw for rings.
+    // ===========================
+    // MAIN SPHERE + RINGS CLUSTER
+    // (fades with completionAlpha)
+    // ===========================
+    ctx.save();
+    if (this.completionAlpha < 1.0) {
+        ctx.globalAlpha *= this.completionAlpha;
+    }
+
+    if (showMainSphere) {
+        this.drawSphereBackground(ctx, cxSphere, cySphere, sphereRadius, opacityFactor);
+    }
+
+    if (showMainSphere && usedSlots === 0) {
         if (this.winState && this.winState.active) {
             // fall through to overlay
         } else {
-            return;
+            // Draw upgrade buttons anyway, anchored to base sphere
+            this.drawUpgradeButtons(ctx, cxBase, cySphereBase, sphereRadiusBase);
         }
     }
 
@@ -170,159 +297,288 @@ CirclesGame.prototype.draw = function () {
 
     const winActive = this.winState && this.winState.active;
 
-    for (let slot = 0; slot < usedSlots; slot++) {
-        const ringIndex = visibleIndices[slot];
-        const ring = this.rings[ringIndex];
+    if (showMainSphere) {
+        if (runAnimOrStatic) {
+            // During flash/shrink/park: visually fill ALL latitude bands.
+            for (let slot = 0; slot < stageSlots; slot++) {
+                const tSlot = stageSlots === 1 ? 0.5 : slot / (stageSlots - 1);
+                const lat = (0.5 - tSlot) * 2 * maxLat;
 
-        // t = slot position in [0, MAX_SLOTS-1]
-        const t = MAX_SLOTS === 1 ? 0.5 : slot / (MAX_SLOTS - 1);
-        const lat = (0.5 - t) * 2 * maxLat;
-
-        if (lat <= -Math.PI / 2 || lat >= Math.PI / 2) {
-            continue;
-        }
-
-        const yOffset = Math.sin(lat) * sphereRadius;
-        const k = Math.cos(lat);
-        const rx = sphereRadius * 1.1 * Math.abs(k);
-        const ry = sphereRadius * 0.55 * Math.abs(k);
-
-        const centerY = cySphere + yOffset;
-        const col = this.ringColor(ringIndex);
-
-        // Background ellipse
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = "rgba(0,0,0,0.65)";
-        this.drawEllipseArc(ctx, cx, centerY, rx, ry, 0, Math.PI * 2);
-
-        // Approximate loops/sec for this ring, use REAL threshold for logic
-        let ringLoopRate = 0;
-        if (this.loopThreshold > 0) {
-            ringLoopRate = loopRate0 / Math.pow(this.loopThreshold, ringIndex);
-        }
-
-        // Hysteresis: latch solid on at 10, release at 4 (on the real state)
-        if (!ring.solid && ringLoopRate >= solidOnThreshold) {
-            ring.solid = true;
-        } else if (ring.solid && ringLoopRate <= solidOffThreshold) {
-            ring.solid = false;
-        }
-        let isSolid = ring.solid;
-
-        // Display progress: blend from snapshot progress -> live progress
-        let displayProgress = ring.progress;
-        if (spendAnim && fromRings && fromRings[ringIndex] && fromRings[ringIndex].exists) {
-            const fromProg = fromRings[ringIndex].progress;
-            displayProgress = fromProg + (ring.progress - fromProg) * spendF;
-            // If the old ring was solid, keep it visually solid during the blend
-            if (fromRings[ringIndex].solid) {
-                isSolid = true;
-            }
-        }
-
-        // Progress arc: solid vs fractional
-        let frac = 0;
-        if (winActive) {
-            // During win animation, render all rings as fully complete
-            frac = 1;
-        } else if (isSolid) {
-            frac = 1;
-        } else {
-            frac = Math.max(0, Math.min(1, displayProgress / displayLoopThreshold));
-        }
-
-        if (frac > 0) {
-            const start = -Math.PI / 2;
-            const end = start + frac * Math.PI * 2;
-
-            ctx.lineWidth = 3.2;
-            ctx.strokeStyle = col;
-            ctx.lineCap = "round";
-            this.drawEllipseArc(ctx, cx, centerY, rx, ry, start, end);
-        }
-
-        // Multiplier label for higher rings with nonzero progress
-        if (ringIndex > 0 && displayProgress > 0) {
-            const term = displayMultScale * (displayProgress + 1);
-            const instMult = Math.sqrt(Math.max(0, term));
-
-            let displayMult;
-
-            if (!winActive && isSolid && !(spendAnim && fromRings && fromRings[ringIndex])) {
-                // For solid rings without spend animation affecting them, smooth over about 1 second using EMA
-                if (ring.multAverage == null) {
-                    ring.multAverage = instMult;
-                } else {
-                    ring.multAverage += (instMult - ring.multAverage) * alpha;
+                if (lat <= -Math.PI / 2 || lat >= Math.PI / 2) {
+                    continue;
                 }
-                displayMult = ring.multAverage;
-            } else {
-                // For non-solid, animating, or win-state rings, show the raw multiplier
-                ring.multAverage = null;
-                displayMult = instMult;
+
+                const yOffset = Math.sin(lat) * sphereRadius;
+                const k = Math.cos(lat);
+                const rx = sphereRadius * 1.1 * Math.abs(k);
+                const ry = sphereRadius * 0.55 * Math.abs(k);
+
+                const centerY = cySphere + yOffset;
+                const col = this.ringColor(slot, this.activeStageIndex);
+
+                // Background ellipse
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = "rgba(0,0,0,0.65)";
+                this.drawEllipseArc(ctx, cxSphere, centerY, rx, ry, 0, Math.PI * 2, ellipseSteps);
+
+                // Full progress arc
+                const start = -Math.PI / 2;
+                const end = start + Math.PI * 2;
+
+                ctx.lineWidth = 3.2;
+                ctx.strokeStyle = col;
+                ctx.lineCap = "round";
+                this.drawEllipseArc(ctx, cxSphere, centerY, rx, ry, start, end, ellipseSteps);
             }
+        } else {
+            // Normal rendering: only for rings that exist / are visible.
+            for (let slot = 0; slot < usedSlots; slot++) {
+                const ringIndex = visibleIndices[slot];
+                const ring = this.rings[ringIndex];
 
-            const label = `${displayMult.toFixed(2)}x`;
+                const t = stageSlots === 1 ? 0.5 : slot / (stageSlots - 1);
+                const lat = (0.5 - t) * 2 * maxLat;
 
-            const thetaTop = -Math.PI / 2;
-            const labelX = cx + rx * Math.cos(thetaTop);
-            const labelY = centerY + ry * Math.sin(thetaTop) - 4;
+                if (lat <= -Math.PI / 2 || lat >= Math.PI / 2) {
+                    continue;
+                }
 
-            ctx.lineWidth = 3;
-            ctx.strokeStyle = col;
-            ctx.strokeText(label, labelX, labelY);
+                const yOffset = Math.sin(lat) * sphereRadius;
+                const k = Math.cos(lat);
+                const rx = sphereRadius * 1.1 * Math.abs(k);
+                const ry = sphereRadius * 0.55 * Math.abs(k);
 
-            ctx.fillStyle = "#000000";
-            ctx.fillText(label, labelX, labelY);
+                const centerY = cySphere + yOffset;
+                const col = this.ringColor(ringIndex, this.activeStageIndex);
+
+                // Background ellipse
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = "rgba(0,0,0,0.65)";
+                this.drawEllipseArc(ctx, cxSphere, centerY, rx, ry, 0, Math.PI * 2, ellipseSteps);
+
+                // Approximate loops/sec for this ring, use REAL threshold for logic
+                let ringLoopRate = 0;
+                if (this.loopThreshold > 0) {
+                    ringLoopRate = loopRate0 / Math.pow(this.loopThreshold, ringIndex);
+                }
+
+                // Hysteresis: latch solid on at 10, release at 4 (on the real state)
+                if (!ring.solid && ringLoopRate >= solidOnThreshold) {
+                    ring.solid = true;
+                } else if (ring.solid && ringLoopRate <= solidOffThreshold) {
+                    ring.solid = false;
+                }
+                let isSolid = ring.solid;
+
+                // Display progress: blend from snapshot progress -> live progress
+                let displayProgress = ring.progress;
+                if (spendAnim && fromRings && fromRings[ringIndex] && fromRings[ringIndex].exists) {
+                    const fromProg = fromRings[ringIndex].progress;
+                    displayProgress = fromProg + (ring.progress - fromProg) * spendF;
+                    if (fromRings[ringIndex].solid) {
+                        isSolid = true;
+                    }
+                }
+
+                // Progress arc: solid vs fractional
+                let frac = 0;
+                if (isSolid) {
+                    frac = 1;
+                } else {
+                    frac = Math.max(0, Math.min(1, displayProgress / displayLoopThreshold));
+                }
+
+                if (frac > 0) {
+                    const start = -Math.PI / 2;
+                    const end = start + frac * Math.PI * 2;
+
+                    ctx.lineWidth = 3.2;
+                    ctx.strokeStyle = col;
+                    ctx.lineCap = "round";
+                    this.drawEllipseArc(ctx, cxSphere, centerY, rx, ry, start, end, ellipseSteps);
+                }
+
+                // Multiplier label for higher rings with nonzero progress
+                if (!runAnimOrStatic && ringIndex > 0 && displayProgress > 0) {
+                    // Mirror safe-mult logic here so the label matches the real math,
+                    // including stage-specific behavior (Stage 1 / Stage 5).
+                    const instMult = this.getRingDisplayMultiplier(
+                        ringIndex,
+                        displayProgress,
+                        displayMultScale
+                    );
+
+                    let displayMult;
+
+                    if (!winActive && isSolid && !(spendAnim && fromRings && fromRings[ringIndex])) {
+                        // Smooth the displayed value while ring is solid and not in a spend tween
+                        if (ring.multAverage == null) {
+                            ring.multAverage = instMult;
+                        } else {
+                            ring.multAverage += (instMult - ring.multAverage) * alpha;
+                        }
+                        displayMult = ring.multAverage;
+                    } else {
+                        ring.multAverage = null;
+                        displayMult = instMult;
+                    }
+
+                    const label = `${displayMult.toFixed(2)}x`;
+
+                    const thetaTop = -Math.PI / 2;
+                    const labelX = cxSphere + rx * Math.cos(thetaTop);
+                    const labelY = centerY + ry * Math.sin(thetaTop) - 4;
+
+                    ctx.lineWidth = 3;
+                    ctx.strokeStyle = col;
+                    ctx.strokeText(label, labelX, labelY);
+
+                    ctx.fillStyle = "#000000";
+                    ctx.fillText(label, labelX, labelY);
+                }
+            }
         }
     }
 
-    // Upgrade buttons in four corners around the circle (and tooltip)
-    this.drawUpgradeButtons(ctx, cx, cySphere, sphereRadius);
+    ctx.restore(); // end of completionAlpha fade for main sphere + rings
+
+    // Stages button and upgrades (UI, not affected by completionAlpha)
+    this.drawStagesButton(ctx, w, h);
+    this.drawUpgradeButtons(ctx, cxBase, cySphereBase, sphereRadiusBase);
+
+    // ===========================
+    // RUN-COMPLETE FLASH OVERLAY
+    // ===========================
+    if (this.runCompleteFlash && this.runCompleteFlash.active) {
+        const tF = this.runCompleteFlash.timer;
+        const Df = this.runCompleteFlash.duration;
+
+        const phase = Math.max(0, Math.min(1, tF / Df));
+
+        // Mild brightness wash
+        const flashAlpha = (1 - Math.abs(phase * 2 - 1)) * 0.35;
+        ctx.fillStyle = "rgba(255,255,255," + flashAlpha + ")";
+        ctx.fillRect(0, 0, w, h);
+
+        // Single expanding pulse ring from the sphere's current position.
+        const baseR = Math.min(w, h) * 0.35;
+        const p = phase;
+        const r = baseR + p * baseR * 1.4;
+
+        ctx.beginPath();
+        ctx.arc(cxSphere, cySphere, r, 0, Math.PI * 2);
+        ctx.lineWidth = 4 * (1 - p);
+        ctx.strokeStyle = "rgba(255,255,255," + ((1 - p) * 0.7) + ")";
+        ctx.stroke();
+    }
+
+    this.drawStagesModal(ctx, w, h);      // modal (if open)
 
     // ===========================
     // WIN ANIMATION OVERLAY
     // ===========================
     if (this.winState && this.winState.active) {
         const tWin = this.winState.timer;
-        const D = this.winState.duration;
 
-        const alphaIn = Math.min(1, tWin * 2.4);
-        const alphaOut = Math.max(0, 1 - (tWin - 1.0) / 2.2);
-        const alpha = Math.min(alphaIn, alphaOut);
+        // Backdrop alpha just eases in once.
+        const backdropAlpha = Math.min(1, tWin * 2.0);
 
-        // Brightness wash
-        ctx.fillStyle = "rgba(255,255,255," + (0.28 * alpha) + ")";
+        ctx.fillStyle = "rgba(0,0,0," + (0.6 * backdropAlpha) + ")";
         ctx.fillRect(0, 0, w, h);
 
-        // Expanding pulse rings
         const cxMid = w / 2;
-        const cyMid = h / 2 + 10;
+        const cyMid = h / 2;
         const baseR = Math.min(w, h) * 0.35;
+        const pulseLifetime = 1.4;
 
-        for (let i = 0; i < 6; i++) {
-            const p = (tWin * 1.3 + i * 0.15) % 1;
-            const r = baseR + p * baseR * 1.2;
+        // Pulses unchanged
+        for (let i = 0; i < this.winPulses.length; i++) {
+            const pulse = this.winPulses[i];
+            const pRaw = pulse.t / pulseLifetime;
+            if (pRaw <= 0 || pRaw > 1) {
+                continue;
+            }
 
-            ctx.beginPath();
-            ctx.arc(cxMid, cyMid, r, 0, Math.PI * 2);
-            ctx.lineWidth = 4 * (1 - p);
-            ctx.strokeStyle = "rgba(255,255,255," + ((1 - p) * 0.55 * alpha) + ")";
-            ctx.stroke();
+            const p1 = pRaw;
+            const p2 = Math.max(0, Math.min(1, pRaw * 0.7 + 0.3));
+
+            const drawRing = (prog) => {
+                const r = baseR + prog * baseR * 1.3;
+                const fade = (1 - prog);
+
+                ctx.beginPath();
+                ctx.arc(cxMid, cyMid, r, 0, Math.PI * 2);
+                ctx.lineWidth = 4 * fade;
+                ctx.strokeStyle = "rgba(255,255,255," + (0.45 * fade * backdropAlpha) + ")";
+                ctx.stroke();
+            };
+
+            drawRing(p1);
+            drawRing(p2);
         }
 
-        // Final message
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
+
+        // ===========================
+        // MAIN WIN TEXT (NO FADE)
+        // ===========================
         ctx.font = '48px "Blockletter"';
+        ctx.lineWidth = 6;
+        ctx.strokeStyle = "rgba(0,0,0,0.9)";
+        ctx.strokeText("You're pretty good at spheres", cxMid, cyMid - 30);
 
-        ctx.lineWidth = 6 * alpha;
-        ctx.strokeStyle = "rgba(0,0,0," + (0.9 * alpha) + ")";
-        ctx.strokeText("You\'re pretty good at spheres", w / 2, h / 2);
+        ctx.fillStyle = "rgba(255,255,255,1)";
+        ctx.fillText("You're pretty good at spheres", cxMid, cyMid - 30);
 
-        ctx.fillStyle = "rgba(255,255,255," + alpha + ")";
-        ctx.fillText("You\'re pretty good at spheres", w / 2, h / 2);
+        // ===========================
+        // PLAYTIME LINE (NO FADE)
+        // ===========================
+        const playtimeLabel = "Playtime: " + this.formatPlayTime();
+
+        ctx.font = '28px "Blockletter"';
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = "rgba(0,0,0,0.9)";
+        ctx.strokeText(playtimeLabel, cxMid, cyMid + 24);
+
+        ctx.fillStyle = "rgba(255,255,255,1)";
+        ctx.fillText(playtimeLabel, cxMid, cyMid + 24);
+
+        // ===========================
+        // CLICK TO RESET (FADE IN ONLY)
+        // ===========================
+        const canReset = this.winState.timer >= (this.winClickDelay || 0);
+        if (canReset) {
+            const fadeT = this.winState.timer - this.winClickDelay;
+            const fadeDur = 1.0;
+            const resetAlpha = Math.min(1, fadeT / fadeDur);
+
+            const resetLabel = "Click anywhere to reset";
+
+            ctx.font = '22px "Blockletter"';
+            ctx.lineWidth = 3 * resetAlpha;
+            ctx.strokeStyle = "rgba(0,0,0," + (0.9 * resetAlpha) + ")";
+            ctx.strokeText(resetLabel, cxMid, cyMid + 64);
+
+            ctx.fillStyle = "rgba(255,255,255," + resetAlpha + ")";
+            ctx.fillText(resetLabel, cxMid, cyMid + 64);
+        }
     }
+
+    // FPS overlay
+    if (this.showFps && this.fps > 0) {
+        ctx.save();
+        ctx.font = "16px 'Blockletter'";
+        ctx.fillStyle = "#ffffff";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+
+        const text = this.fps.toFixed(1) + " FPS";
+        ctx.fillText(text, 10, 8);
+
+        ctx.restore();
+    }
+
 };
 
 CirclesGame.prototype.updateInfo = function () {
@@ -341,4 +597,20 @@ CirclesGame.prototype.updateInfo = function () {
             mult scale: <strong>${this.multScale.toFixed(3)}</strong>
         </div>
     `;
+};
+
+CirclesGame.prototype.formatPlayTime = function () {
+    const totalSeconds = Math.floor(this.totalPlayTime || 0);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    const pad = function (n) {
+        return n < 10 ? "0" + n : "" + n;
+    };
+
+    if (hours > 0) {
+        return hours + ":" + pad(minutes) + ":" + pad(seconds);
+    }
+    return minutes + ":" + pad(seconds);
 };
