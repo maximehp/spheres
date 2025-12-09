@@ -140,7 +140,20 @@ CirclesGame.prototype.renderStagesList = function () {
 };
 
 CirclesGame.prototype.showStagesModal = function () {
+    // Do not restart a running opening animation
+    if (this.stagesModalAnim && this.stagesModalAnim.active && this.stagesModalAnim.opening) {
+        return;
+    }
+
     this.stagesModalVisible = true;
+    this.stageRowBounds = [];
+
+    this.stagesModalAnim = {
+        active: true,
+        opening: true,
+        t: 0,
+        duration: 0.2   // total time for open animation
+    };
 };
 
 CirclesGame.prototype.hideStagesModal = function () {
@@ -149,7 +162,19 @@ CirclesGame.prototype.hideStagesModal = function () {
     if (this.requireStageChange) {
         return;
     }
-    this.stagesModalVisible = false;
+
+    if (!this.stagesModalVisible) {
+        return;
+    }
+
+    this.stageRowBounds = [];
+
+    this.stagesModalAnim = {
+        active: true,
+        opening: false,
+        t: 0,
+        duration: 0.2   // total time for close animation
+    };
 };
 
 // Start or restart a given stage index.
@@ -265,7 +290,7 @@ CirclesGame.prototype.drawCompletedStageSpheres = function (ctx, cxBase, cySpher
     ctx.font = "12px 'Blockletter'";
 
     const maxLat = Math.PI * 0.45;
-    const STEPS = 64;
+    const STEPS = 12;
 
     // Helper: draw one 3D-rotated ring as a polyline
     function drawRing3D(cx, cy, R, lat, yaw, pitch, roll, color) {
@@ -357,6 +382,9 @@ CirclesGame.prototype.drawCompletedStageSpheres = function (ctx, cxBase, cySpher
 
         ctx.save();
 
+        // Always render completed trophies at 0.6 opacity
+        ctx.globalAlpha *= 0.6;
+
         // Base gradient sphere
         this.drawSphereBackground(ctx, sx, sy, smallRadius, 1.0);
 
@@ -376,30 +404,20 @@ CirclesGame.prototype.drawCompletedStageSpheres = function (ctx, cxBase, cySpher
         let pitch = basePitch;
         let roll = baseRoll;
 
-        if (rotationOn) {
-            // Local per-sphere timer: starts at 0 and only advances while rotating.
-            if (typeof s.spinT !== "number") {
-                s.spinT = 0;
-            }
-
-            // Use the previous value of spinT to compute orientation,
-            // so the first rotating frame is exactly the base pose.
-            const tLocal = s.spinT;
-
-            // Advance timer for next frame
-            s.spinT += dt;
-
-            // Small animated offsets around the base pose, desynced per stage
-            yaw = baseYaw + tLocal * 0.35;
-
-            pitch = basePitch + Math.sin(tLocal * 0.27 + basePhase) * 0.4;
-
-            roll = baseRoll + Math.sin(tLocal * 0.19 + basePhase * 1.3) * 0.4;
-        } else {
-            // If rotation is off, keep the timer reset so it starts from
-            // the base pose next time it is enabled.
+        // Local per-sphere timer: starts at 0 and only advances while rotating.
+        if (typeof s.spinT !== "number") {
             s.spinT = 0;
         }
+
+        // Advance timer first so the very first rotating frame already
+        // has a tiny movement away from the pure base pose.
+        s.spinT += dt;
+        const tLocal = s.spinT;
+
+        // Small animated offsets around the base pose, desynced per stage
+        yaw = baseYaw + tLocal * 0.35;
+        pitch = basePitch + Math.sin(tLocal * 0.27 * basePhase) * 0.4;
+        roll = baseRoll + Math.sin(tLocal * 0.19 * basePhase * 1.3) * 0.4;
 
         // Latitude rings: same count and thickness as main sphere
         for (let slot = 0; slot < MAX_SLOTS; slot++) {
@@ -458,132 +476,289 @@ CirclesGame.prototype.drawStagesButton = function (ctx, w, h) {
 };
 
 CirclesGame.prototype.drawStagesModal = function (ctx, w, h) {
-    if (!this.stagesModalVisible) {
+    // If neither visible nor animating, nothing to draw
+    let anim = (this.stagesModalAnim && this.stagesModalAnim.active) ? this.stagesModalAnim : null;
+
+    if (!this.stagesModalVisible && !anim) {
         this.stageRowBounds = [];
         this.stageModalCloseBounds = null;
         return;
     }
 
-    // Backdrop
+    const dt = this.lastDt || 0.016;
+
+    // Advance animation timer if present
+    if (anim) {
+        anim.t += dt;
+        if (anim.t >= anim.duration) {
+            anim.t = anim.duration;
+            anim.active = false;
+
+            // When closing finishes, actually hide the modal
+            if (!anim.opening) {
+                this.stagesModalVisible = false;
+            }
+
+            anim = null;
+        }
+    }
+
+    // If still not visible (finished closing), stop
+    if (!this.stagesModalVisible && !anim) {
+        this.stageRowBounds = [];
+        this.stageModalCloseBounds = null;
+        return;
+    }
+
+    const animActive = !!anim;
+
+    // Backdrop (always full screen, not scaled)
     ctx.fillStyle = "rgba(0,0,0,0.55)";
     ctx.fillRect(0, 0, w, h);
 
-    const modalW = w * 0.6;
-    const modalH = h * 0.65;
+    // Layout constants
+    const padding = 15;
+    const titleGap = 0;
+    const rowGap = 10;
+
+    // Dynamic card size relative to screen width
+    const cardSize = Math.max(90, Math.min(140, w * 0.10));
+
+    const cols = 4;
+    const rows = 2;
+
+    // Width of 4 cards + gaps
+    const gridInnerWidth = cols * cardSize + (cols - 1) * rowGap;
+    const modalW = gridInnerWidth + padding * 2;
+
+    // Title block height
+    const titleHeight = 40;
+
+    // Two rows of cards
+    const gridInnerHeight = cardSize + rowGap + cardSize;
+
+    // Stage 9 (full-width) height
+    const stage9Height = cardSize;
+
+    // Final modal height
+    const modalH =
+        padding +
+        titleHeight +
+        titleGap +
+        gridInnerHeight +
+        rowGap +          // gap before Stage 9
+        stage9Height +
+        padding;
+
+    // Points panel constants
+    const pointsGap = 12;
+    const pointsHeight = 80;
+
+    // Center modal vertically (space added for points panel)
     const x = (w - modalW) / 2;
-    const y = (h - modalH) / 2;
+    const y = (h - (modalH + pointsHeight + pointsGap)) / 2;
 
-    this.stagesModalBounds = { x, y, w: modalW, h: modalH };
+    // Compute animation-based scale factors
+    let scaleX = 1;
+    let scaleY = 1;
 
-    // Window panel
+    if (animActive) {
+        const raw = Math.max(0, Math.min(1, anim.t / anim.duration));
+        const dir = anim.opening ? raw : 1 - raw; // 0 -> 1 opening, 1 -> 0 closing
+
+        // Two-phase animation:
+        // phase 1 (0..0.5): grow width from 0 to 1, height up to thin strip
+        // phase 2 (0.5..1): keep width ~1, grow height from thin strip to 1
+        const phase1 = Math.min(1, dir * 2);       // 0..1
+        const phase2 = Math.max(0, dir * 2 - 1);   // 0..1
+
+        function easeOutQuad(t) {
+            return t * (2 - t);
+        }
+
+        const sWidth = easeOutQuad(phase1);        // width scaling
+        const thinFrac = 0.05;                     // relative thickness of the "line"
+        const heightPhase1 = thinFrac * sWidth;
+        const heightPhase2 = easeOutQuad(phase2);
+        const sHeight = heightPhase1 + (1 - thinFrac) * heightPhase2;
+
+        scaleX = sWidth;
+        scaleY = sHeight;
+
+        // Guard against degenerate frame
+        if (scaleX < 0.001 || scaleY < 0.001) {
+            return;
+        }
+    }
+
+    // Everything below (modal + grid + stage 9 + points) is drawn under a scale transform
+    const cx = x + modalW / 2;
+    const cy = y + (modalH + pointsGap + pointsHeight) / 2;
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(scaleX, scaleY);
+    ctx.translate(-cx, -cy);
+
+    // Draw modal panel
     ctx.beginPath();
-    ctx.roundRect(x, y, modalW, modalH, 20);
-    ctx.fillStyle = "rgba(20,20,40,0.95)";
+    ctx.rect(x, y, modalW, modalH);
+    ctx.fillStyle = "rgba(10, 10, 20, 0.95)";
     ctx.fill();
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = "white";
+
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(200,230,255,0.95)";
     ctx.stroke();
 
     // Title
-    ctx.font = "32px Blockletter";
+    ctx.font = "32px 'Blockletter'";
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
-    ctx.fillStyle = "white";
-    ctx.fillText("STAGES", x + modalW / 2, y + 20);
+    ctx.fillStyle = "#f6f6ff";
+    ctx.fillText("STAGES", x + modalW / 2, y + padding);
 
-    // Close button (only active if we are not forced to change stage)
-    const closeSize = 32;
-    const cxClose = x + modalW - closeSize - 12;
-    const cyClose = y + 12;
-    this.stageModalCloseBounds = { x: cxClose, y: cyClose, w: closeSize, h: closeSize };
-
-    ctx.beginPath();
-    ctx.roundRect(cxClose, cyClose, closeSize, closeSize, 8);
-    ctx.fillStyle = this.requireStageChange
-        ? "rgba(120,120,120,0.6)"
-        : "rgba(255,60,60,0.8)";
-    ctx.fill();
-
-    ctx.font = "26px Blockletter";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillStyle = "black";
-    ctx.fillText("X", cxClose + closeSize / 2, cyClose + closeSize / 2);
-
-    // Stage rows
-    const rowH = 48;
-    const startY = y + 90;
-
+    this.stageModalCloseBounds = null;
     this.stageRowBounds = [];
+
+    // Grid origin
+    const gridX = x + padding;
+    const gridY = y + padding + titleHeight + titleGap;
 
     const count = this.stageCount || 9;
     const completedFlags = this.stageCompleted || new Array(count).fill(false);
     const lastIndex = count - 1;
+
     const allBeforeLastComplete = completedFlags
         .slice(0, lastIndex)
         .every(Boolean);
 
-    for (let i = 0; i < count; i++) {
-        const ry = startY + i * (rowH + 8);
+    const allowClicks = !animActive;
 
-        if (ry + rowH > y + modalH - 20) break;
-
-        const isComplete = !!completedFlags[i];
-        const isActive = this.activeStageIndex === i;
-        const isFinal = i === count - 1;
+    // Helper to draw a card
+    const drawCard = (idx, cardX, cardY, cardW, cardH) => {
+        const isComplete = !!completedFlags[idx];
+        const isActive = this.activeStageIndex === idx;
 
         let locked = false;
-        let status;
+        let statusText = isComplete ? "Completed" : "Available";
 
-        if (isComplete) {
-            locked = true;
-            status = "Completed (locked)";
-        } else {
-            status = "Not Completed";
-        }
-
-        // Final stage requires all previous stages completed
-        if (isFinal && !allBeforeLastComplete) {
-            locked = true;
-            status = "Locked (complete all previous stages)";
-        }
-
-        // After a completion, you must choose a different stage
+        if (isComplete) locked = true;
         if (this.requireStageChange && isActive) {
             locked = true;
-            status = "Choose another stage to continue";
+            statusText = "Pick another";
         }
 
-        // Background
+        let fillStyle, strokeStyle;
+        let titleColor = "#f6f6ff";
+        let statusColor = "#d0d0ff";
+
+        if (isComplete) {
+            fillStyle = "rgba(60,60,60,0.6)";
+            strokeStyle = "rgba(150,150,150,0.6)";
+            titleColor = "#b0b0b0";
+            statusColor = "#c0c0c0";
+        } else if (locked) {
+            fillStyle = "rgba(10,10,20,0.7)";
+            strokeStyle = "rgba(120,140,170,0.8)";
+        } else if (isActive) {
+            fillStyle = "rgba(15,20,40,0.98)";
+            strokeStyle = "rgba(200,230,255,0.98)";
+        } else {
+            fillStyle = "rgba(15,20,40,0.95)";
+            strokeStyle = "rgba(200,230,255,0.9)";
+        }
+
         ctx.beginPath();
-        ctx.roundRect(x + 20, ry, modalW - 40, rowH, 12);
-        ctx.fillStyle = locked
-            ? "rgba(80,80,80,0.5)"
-            : isActive
-            ? "rgba(120,180,255,0.5)"
-            : isComplete
-            ? "rgba(100,255,120,0.5)"
-            : "rgba(255,255,255,0.15)";
+        ctx.rect(cardX, cardY, cardW, cardH);
+        ctx.fillStyle = fillStyle;
         ctx.fill();
 
-        // Text
-        ctx.textAlign = "left";
+        ctx.lineWidth = isActive && !isComplete ? 2 : 1;
+        ctx.strokeStyle = strokeStyle;
+        ctx.stroke();
+
+        ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.font = "20px Blockletter";
-        ctx.fillStyle = "white";
 
-        ctx.fillText(`Stage ${i + 1} — ${status}`, x + 30, ry + rowH / 2);
+        ctx.font = "20px 'Blockletter'";
+        ctx.fillStyle = titleColor;
+        ctx.fillText("Stage " + (idx + 1), cardX + cardW / 2, cardY + cardH * 0.35);
 
-        // Save clickable bounds if row is clickable
-        if (!locked) {
+        ctx.font = "14px 'Blockletter'";
+        ctx.fillStyle = statusColor;
+        ctx.fillText(statusText, cardX + cardW / 2, cardY + cardH * 0.65);
+
+        // Do not allow interaction while animating
+        if (!locked && allowClicks) {
             this.stageRowBounds.push({
-                x: x + 20,
-                y: ry,
-                w: modalW - 40,
-                h: rowH,
-                index: i
+                x: cardX,
+                y: cardY,
+                w: cardW,
+                h: cardH,
+                index: idx
             });
         }
-    }
-};
+    };
 
+    // Draw stages 1–8 (grid)
+    for (let i = 0; i < 8 && i < count; i++) {
+        const row = Math.floor(i / cols);
+        const col = i % cols;
+
+        const cardX = gridX + col * (cardSize + rowGap);
+        const cardY = gridY + row * (cardSize + rowGap);
+
+        drawCard(i, cardX, cardY, cardSize, cardSize);
+    }
+
+    // Draw Stage 9 full-width
+    if (count === 9) {
+        const idx = 8;
+
+        const stage9X = gridX;
+        const stage9Y =
+            gridY +
+            (rows * cardSize) +
+            ((rows - 1) * rowGap) +
+            rowGap;       // spacing after row 2
+
+        const stage9W = gridInnerWidth;
+        const stage9H = cardSize;
+
+        drawCard(idx, stage9X, stage9Y, stage9W, stage9H);
+    }
+
+    // ===== POINTS PANEL (same width as modal, included in scale) =====
+    const pointsX = x;
+    const pointsY = y + modalH + pointsGap;
+
+    ctx.beginPath();
+    ctx.rect(pointsX, pointsY, modalW, pointsHeight);
+    ctx.fillStyle = "rgba(15,20,40,0.95)";
+    ctx.fill();
+
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(200,230,255,0.95)";
+    ctx.stroke();
+
+    // Points text
+    const totalPoints = this.totalUnits || 0;
+
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.font = "24px 'Blockletter'";
+    ctx.fillStyle = "#f6f6ff";
+    ctx.fillText("POINTS", pointsX + 10, pointsY + 10);
+
+    ctx.textAlign = "right";
+    ctx.textBaseline = "bottom";
+    ctx.font = "20px 'Blockletter'";
+    ctx.fillStyle = "#ffd2ff";
+    ctx.fillText(
+        totalPoints.toLocaleString(),
+        pointsX + modalW - 10,
+        pointsY + pointsHeight - 12
+    );
+
+    ctx.restore(); // end modal+points scaling block
+};

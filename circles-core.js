@@ -122,6 +122,9 @@ class CirclesGame {
 
         this.devUnlocked = false;
 
+        // Overall fade for completion animation (1 -> 0.6 while shrinking)
+        this.completionAlpha = 1.0;
+
         // Default cursor; hover will switch to pointer only over buttons.
         this.canvas.style.cursor = "default";
 
@@ -190,6 +193,9 @@ CirclesGame.prototype.resetAll = function () {
     this.runCompleteFlash.active = false;
     this.runCompleteFlash.timer = 0;
     this.runCompleteFlash.startedShrink = false;
+
+    // Completion fade reset
+    this.completionAlpha = 1.0;
 
     // Global speed
     this.speedScale = 1.0;
@@ -357,7 +363,23 @@ CirclesGame.prototype.handleStageCompletion = function () {
 
     this.stageCompleted[idx] = true;
 
-    // Stable orbit angle for this stage
+    // Final stage: no trophy sphere, just mark completion and bail.
+    const finalIndex = (this.stageCount || 9) - 1;
+    const isFinalStage = idx === finalIndex;
+
+    if (isFinalStage) {
+        // Still persist completion and UI state.
+        this.saveLocal();
+        if (typeof this.updateStagesToggleVisibility === "function") {
+            this.updateStagesToggleVisibility();
+        }
+
+        // Do not create a completedStageSphere, do not start shrink.
+        // Whatever win/run-complete logic you have runs elsewhere.
+        return;
+    }
+
+    // Stable orbit angle for this (non-final) stage
     const angle = this.getStageAngle(idx);
 
     // Pick a color for this stage
@@ -377,21 +399,19 @@ CirclesGame.prototype.handleStageCompletion = function () {
         sphere.angle = angle;
         sphere.color = color;
         sphere.loops = loopsAtCompletion;
-        sphere.spawned = false;
-        sphere.rotationEnabled = false;
     } else {
         sphere = {
             stage: idx,
             angle: angle,
             color: color,
-            loops: loopsAtCompletion,
-            // The trophy will not be drawn until shrink finishes
-            spawned: false,
-            // Rotation will only start after we move on to a new stage
-            rotationEnabled: false
+            loops: loopsAtCompletion
         };
         this.completedStageSpheres.push(sphere);
     }
+
+    // Fresh animation state for this completed trophy
+    sphere.spawned = false;              // waits for shrink to finish
+    sphere.spinT = 0;                    // start from base pose at t = 0
 
     // Let update() know which stage’s trophy to “spawn” when shrink is done
     this.pendingStageSphereStage = idx;
@@ -405,26 +425,37 @@ CirclesGame.prototype.handleStageCompletion = function () {
         this.updateStagesToggleVisibility();
     }
 
-    const isFirstStage = idx === 0;
-    if (isFirstStage) {
-        if (!this.stageModalTimer) {
-            this.stageModalTimer = { active: false, t: 0, delay: 3.0 };
-        }
-        this.stageModalTimer.active = true;
-        this.stageModalTimer.t = 0;
+    // Always start the delayed modal for any non-final stage completion
+    if (!this.stageModalTimer) {
+        this.stageModalTimer = { active: false, t: 0, delay: 3.0 };
     }
+    this.stageModalTimer.active = true;
+    this.stageModalTimer.t = 0;
 };
 
 CirclesGame.prototype.getStageAngle = function (stageIndex) {
-    const count = this.stageCount - 1 || 8;
-    let idx = stageIndex;
+    // We always want 8 non-final stages
+    const visibleCount = (this.stageCount || 9) - 1;   // expect 8
+    if (visibleCount <= 0) {
+        return 0;
+    }
 
-    if (idx == null || idx < 0 || idx >= count) {
+    // Clamp stageIndex
+    let idx = stageIndex;
+    if (idx == null || idx < 0 || idx >= visibleCount) {
         idx = 0;
     }
 
-    // Evenly spaced around the circle
-    return (idx / count) * Math.PI * 2;
+    // Even spacing: full circle / 8
+    const slotAngle = (Math.PI * 2) / visibleCount;     // 45 degrees
+
+    // Offset: half a slot (your “12:30 instead of 12” analogy)
+    const offset = slotAngle * (19 / 3);                 // 15 degrees
+
+    // Final angle:
+    // idx * slotAngle so trophies increase clockwise
+    // + halfOffset so the first one sits halfway between 12 and 1.
+    return idx * slotAngle + offset;
 };
 
 ///////////////////////////////////////////////////////
@@ -507,7 +538,8 @@ CirclesGame.prototype.update = function (dt) {
                     const sphere = this.completedStageSpheres.find(s => s.stage === stageIdx);
                     if (sphere) {
                         sphere.spawned = true;          // now it can be drawn
-                        // rotationEnabled stays false until we start a new stage
+                        sphere.rotationEnabled = true;  // start spinning immediately
+                        sphere.spinT = 0;               // start at base yaw/pitch/roll
                     }
                     this.pendingStageSphereStage = null;
                 }
@@ -615,8 +647,8 @@ CirclesGame.prototype.update = function (dt) {
     this.rebuildFromTotal();
 
     // Run completion detection based on the 12th ring (index 11) completing a loop.
-    if (this.rings.length >= 12) {
-        const topRing = this.rings[11];
+    if (this.rings.length >= MAX_SLOTS) {
+        const topRing = this.rings[MAX_SLOTS - 1];
         const digit = topRing.progress;
 
         if (this.lastTopDigit !== null &&
@@ -734,6 +766,12 @@ CirclesGame.prototype.serializeState = function () {
         devUnlocked: this.devUnlocked,
         stageCompleted: this.stageCompleted.slice(),
         activeStageIndex: this.activeStageIndex,
+
+        // New: persist “between-runs” / UI state
+        requireStageChange: !!this.requireStageChange,
+        stagesModalVisible: !!this.stagesModalVisible,
+        completedSphereStatic: !!this.completedSphereStatic,
+
         completedStageSpheres: (this.completedStageSpheres || []).map(s => ({
             stage: s.stage,
             angle: s.angle,
@@ -768,17 +806,34 @@ CirclesGame.prototype.applyState = function (s) {
         ? s.activeStageIndex
         : 0;
 
-    // Restore trophy spheres
+    // New: restore “between-runs” / UI state
+    this.requireStageChange = !!s.requireStageChange;
+    this.stagesModalVisible = !!s.stagesModalVisible;
+
+    // If we are in "must pick a new stage" limbo, the sphere should
+    // always be treated as parked, even if the old save did not
+    // have completedSphereStatic set.
+    this.completedSphereStatic =
+        !!s.completedSphereStatic || this.requireStageChange;
+
+    // Restore trophy spheres, but guarantee that any completed stage
+    // actually has its sphere spawned, even if the save was taken
+    // mid-anim (when spawned was still false).
     if (Array.isArray(s.completedStageSpheres)) {
-        this.completedStageSpheres = s.completedStageSpheres.map(o => ({
-            stage: o.stage,
-            angle: o.angle,
-            color: o.color,
-            loops: o.loops,
-            // Old saves will have these missing; default to "already spawned and spinning"
-            spawned: o.spawned === undefined ? true : o.spawned,
-            rotationEnabled: o.rotationEnabled === undefined ? true : o.rotationEnabled
-        }));
+        this.completedStageSpheres = s.completedStageSpheres.map(o => {
+            const stage = o.stage;
+            const stageIsComplete = Array.isArray(this.stageCompleted) && this.stageCompleted[stage];
+            const savedSpawned = (o.spawned === undefined ? true : o.spawned);
+
+            return {
+                stage: stage,
+                angle: o.angle,
+                color: o.color,
+                loops: o.loops,
+                spawned: stageIsComplete ? true : savedSpawned,
+                rotationEnabled: o.rotationEnabled === undefined ? true : o.rotationEnabled
+            };
+        });
     } else {
         this.completedStageSpheres = [];
     }
@@ -799,9 +854,25 @@ CirclesGame.prototype.applyState = function (s) {
 
     this.rebuildFromTotal();
 
-    // Reset transient flags
+    // Transient flags
     this.pendingStageSphereStage = null;
-    this.requireStageChange = false;
+
+    // Ensure run-complete animations are not “halfway” after load
+    if (this.runCompleteFlash) {
+        this.runCompleteFlash.active = false;
+        this.runCompleteFlash.timer = 0;
+        this.runCompleteFlash.startedShrink = false;
+    }
+    if (this.runCompleteAnim) {
+        this.runCompleteAnim.active = false;
+        this.runCompleteAnim.t = 0;
+    }
+
+    // If we were in the “pick a new stage before playing” state,
+    // force the stages modal to be open again.
+    if (this.requireStageChange && typeof this.showStagesModal === "function") {
+        this.showStagesModal();
+    }
 
     if (typeof this.updateStagesToggleVisibility === "function") {
         this.updateStagesToggleVisibility();

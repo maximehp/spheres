@@ -21,8 +21,12 @@ CirclesGame.prototype.drawSphereBackground = function (ctx, cx, cy, R, opacityFa
     ctx.stroke();
 };
 
-CirclesGame.prototype.drawEllipseArc = function (ctx, cx, cy, rx, ry, startAngle, endAngle) {
-    const steps = 48;
+CirclesGame.prototype.drawEllipseArc = function (ctx, cx, cy, rx, ry, startAngle, endAngle, stepsOverride) {
+    // Allow the caller to override quality; fall back to a default.
+    const steps = (typeof stepsOverride === "number" && stepsOverride > 0)
+        ? stepsOverride
+        : 48;
+
     const dir = endAngle >= startAngle ? 1 : -1;
     const total = Math.abs(endAngle - startAngle);
     const step = (total / steps) * dir;
@@ -44,3 +48,4 @@ CirclesGame.prototype.drawEllipseArc = function (ctx, cx, cy, rx, ry, startAngle
     }
     ctx.stroke();
 };
+
