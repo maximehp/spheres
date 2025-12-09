@@ -1,3 +1,5 @@
+// circles-core.js
+
 ///////////////////////////////////////////////////////
 // CORE: Ring + CirclesGame (constructor, loop, math)
 ///////////////////////////////////////////////////////
@@ -57,6 +59,11 @@ class CirclesGame {
         this.baseMultScale = 1.0;
         this.multScale = 1.0;
 
+        // Keep copies of the original defaults for stage handicaps
+        this.defaultBaseLoopThreshold = this.baseLoopThreshold;
+        this.defaultBaseBaseRate = this.baseBaseRate;
+        this.defaultBaseMultScale = this.baseMultScale;
+
         // Upgrades: [rate x2, threshold, mult, boost others]
         this.upgradeLevels = [0, 0, 0, 0];
         this.upgradeButtons = [null, null, null, null];
@@ -75,6 +82,11 @@ class CirclesGame {
         this.stagesModalBounds = null;  // where the modal is drawn
         this.stageRowBounds = [];       // clickable rows
         this.stageModalCloseBounds = null; // X button
+
+        // NEW: meta-upgrade UI bounds for the points panel
+        this.stageMetaButtons = [];     // [{ x, y, w, h, index }]
+        this.stageRespecBounds = null;  // { x, y, w, h }
+        this.hoveredStageMetaIndex = null;
 
         // Timer for auto-opening the stages modal after a clear
         this.stageModalTimer = {
@@ -205,6 +217,8 @@ CirclesGame.prototype.resetAll = function () {
     this.stageCompleted = new Array(this.stageCount).fill(false);
     this.activeStageIndex = 0;
     this.completedStageSpheres = [];
+    this.stagePoints = 0;
+    this.stagePointLevels = [];
 
     // New flags related to stage trophies
     this.pendingStageSphereStage = null;
@@ -214,6 +228,11 @@ CirclesGame.prototype.resetAll = function () {
     this.stagesModalVisible = false;
     this.stageRowBounds = [];
     this.stageModalCloseBounds = null;
+
+    // NEW: clear meta UI bounds / hover
+    this.stageMetaButtons = [];
+    this.stageRespecBounds = null;
+    this.hoveredStageMetaIndex = null;
 
     if (typeof this.updateStagesToggleVisibility === "function") {
         this.updateStagesToggleVisibility();
@@ -246,7 +265,9 @@ CirclesGame.prototype.startRunCompleteFlash = function () {
     this.runCompleteAnim = {
         active: false,
         t: 0,
-        duration: 1.2,
+        duration: this.runCompleteAnim && this.runCompleteAnim.duration
+            ? this.runCompleteAnim.duration
+            : 1.2,
         angle: angle,
         targetOffset: 0,
         targetRadiusScale: STAGE_SPHERE_RADIUS_FACTOR
@@ -613,14 +634,41 @@ CirclesGame.prototype.update = function (dt) {
 
     // Multiplier from higher rings based on their *current* progress.
     // mult_total = Π_{i>=1, ring exists} sqrt( multScale * (progress_i + 1) )
+    //
+    // SP 3 effect: if enabled, any higher ring with fewer than 4 loops
+    // of progress is treated as if it had 4 for multiplier purposes.
+    const hasMultFloor = Array.isArray(this.stagePointLevels) &&
+    this.stagePointLevels[3] > 0;
+
+    const stageIdx = this.getActiveStageIndexSafe();
+    const noLoopMult = this.isNoLoopMultStage();
+    const hasHighRingPenalty = this.hasHighRingPenaltyStage();
+
     let totalMult = 1;
-    for (let i = 1; i < this.rings.length; i++) {
-        const ring = this.rings[i];
-        if (!ring.exists()) {
-            continue;
+
+    if (!noLoopMult) {
+        for (let i = 1; i < this.rings.length; i++) {
+            const ring = this.rings[i];
+            if (!ring.exists()) {
+                continue;
+            }
+
+            let effectiveProgress = ring.progress;
+            if (hasMultFloor) {
+                effectiveProgress = Math.max(effectiveProgress, 4);
+            }
+
+            let term = this.multScale * (effectiveProgress + 1);
+
+            // Stage 1: higher rings contribute less (10% per ring level)
+            if (hasHighRingPenalty) {
+                const ringLevel = ring.level != null ? ring.level : i;
+                const penalty = Math.max(0.1, 1 - 0.1 * ringLevel);
+                term *= penalty;
+            }
+
+            totalMult *= Math.sqrt(Math.max(0, term));
         }
-        const term = this.multScale * (ring.progress + 1);
-        totalMult *= Math.sqrt(Math.max(0, term));
     }
 
     const speed0 = baseRate0 * totalMult;
@@ -646,9 +694,11 @@ CirclesGame.prototype.update = function (dt) {
     // Now that totalUnits changed, rebuild rings[1..] from it.
     this.rebuildFromTotal();
 
-    // Run completion detection based on the 12th ring (index 11) completing a loop.
-    if (this.rings.length >= MAX_SLOTS) {
-        const topRing = this.rings[MAX_SLOTS - 1];
+    const stageSlots = this.getStageLoopSlots(this.activeStageIndex);
+
+    // Run completion detection based on the Nth ring completing a loop.
+    if (this.rings.length >= stageSlots) {
+        const topRing = this.rings[stageSlots - 1];
         const digit = topRing.progress;
 
         if (this.lastTopDigit !== null &&
@@ -709,6 +759,67 @@ CirclesGame.prototype.handleClick = function (event) {
             }
         }
 
+        // Stage meta-upgrade buttons (in points panel)
+        if (Array.isArray(this.stageMetaButtons)) {
+            for (let i = 0; i < this.stageMetaButtons.length; i++) {
+                const b = this.stageMetaButtons[i];
+                if (x >= b.x && x <= b.x + b.w &&
+                    y >= b.y && y <= b.y + b.h) {
+
+                    const idx = b.index;
+
+                    // Make sure arrays / counters exist
+                    if (typeof this._ensureStagePoints === "function") {
+                        this._ensureStagePoints();
+                    }
+
+                    const sp = (typeof this.stagePoints === "number") ? this.stagePoints : 0;
+                    const levels = Array.isArray(this.stagePointLevels) ? this.stagePointLevels : null;
+
+                    // Hard fallback: if we can see cost and levels, force-buy if affordable
+                    if (levels && typeof this.getStagePointUpgradeCost === "function") {
+                        const cost = this.getStagePointUpgradeCost(idx);
+                        const owned = levels[idx] > 0;
+
+                        // Force it: if not owned and you have enough points, you get it
+                        if (!owned && sp >= cost) {
+                            this.stagePoints = sp - cost;
+                            this.stagePointLevels[idx] = 1;
+
+                            if (typeof this.saveLocal === "function") {
+                                this.saveLocal();
+                            }
+
+                            // Optionally: you can trigger a redraw flag here if needed
+                            return;
+                        }
+                    }
+
+                    // Fallback to normal logic if for some reason the force path did not trigger
+                    if (typeof this.buyStagePointUpgrade === "function") {
+                        this.buyStagePointUpgrade(idx);
+                    }
+                    return;
+                }
+            }
+        }
+
+        // Respec button (also resets current stage progress)
+        if (this.stageRespecBounds) {
+            const b = this.stageRespecBounds;
+            if (x >= b.x && x <= b.x + b.w &&
+                y >= b.y && y <= b.y + b.h) {
+                if (typeof this.respecStagePointUpgrades === "function") {
+                    this.respecStagePointUpgrades();
+                }
+                // Reset the current stage run as part of respec
+                if (typeof this.startStage === "function") {
+                    this.startStage(this.activeStageIndex || 0);
+                }
+                return;
+            }
+        }
+
         // Stage cards
         if (Array.isArray(this.stageRowBounds)) {
             for (const row of this.stageRowBounds) {
@@ -720,15 +831,11 @@ CirclesGame.prototype.handleClick = function (event) {
                     const isComplete = this.stageCompleted &&
                         this.stageCompleted[idx];
 
-                    // If this is the current in-progress stage and we are
-                    // not in "must change stage" limbo, just resume:
-                    // close the modal and do not reset anything.
                     if (isCurrent && !isComplete && !this.requireStageChange) {
                         this.hideStagesModal();
                         return;
                     }
 
-                    // Otherwise, starting a stage behaves as before
                     this.startStage(idx);
                     this.hideStagesModal();
                     return;
@@ -745,7 +852,6 @@ CirclesGame.prototype.handleClick = function (event) {
                 y >= b.y && y <= b.y + b.h;
 
             if (!inside) {
-                // If we are forced to change stage, do not allow closing.
                 if (this.requireStageChange) {
                     return;
                 }
@@ -756,15 +862,11 @@ CirclesGame.prototype.handleClick = function (event) {
                 const isComplete = this.stageCompleted &&
                     this.stageCompleted[idx];
 
-                // If the current stage is still in progress, treat this as
-                // "Resume": just close the modal.
                 if (!isComplete) {
                     this.hideStagesModal();
                     return;
                 }
 
-                // If for some reason the current stage is completed, fall
-                // back to restarting that stage.
                 this.startStage(idx);
                 this.hideStagesModal();
                 return;
@@ -818,6 +920,9 @@ CirclesGame.prototype.handleHover = function (event) {
     // 1) Hover inside stages modal, if visible
     //////////////////////////////////////////////////////
     if (this.stagesModalVisible) {
+        // Reset hovered meta index each frame
+        this.hoveredStageMetaIndex = null;
+
         // Close button hover
         if (this.stageModalCloseBounds) {
             const b = this.stageModalCloseBounds;
@@ -836,6 +941,42 @@ CirclesGame.prototype.handleHover = function (event) {
                     overInteractive = true;
                     break;
                 }
+            }
+        }
+
+        // Meta-upgrade buttons hover
+        if (Array.isArray(this.stageMetaButtons)) {
+            const stagePoints = (typeof this.stagePoints === "number") ? this.stagePoints : 0;
+
+            for (let i = 0; i < this.stageMetaButtons.length; i++) {
+                const b = this.stageMetaButtons[i];
+                if (x >= b.x && x <= b.x + b.w &&
+                    y >= b.y && y <= b.y + b.h) {
+
+                    this.hoveredStageMetaIndex = b.index;
+
+                    // Pointer only if affordable and not already owned
+                    let owned = Array.isArray(this.stagePointLevels) &&
+                        this.stagePointLevels[b.index] > 0;
+                    let cost = (typeof this.getStagePointUpgradeCost === "function")
+                        ? this.getStagePointUpgradeCost(b.index)
+                        : 1;
+                    let affordable = stagePoints >= cost;
+
+                    if (!owned && affordable) {
+                        overInteractive = true;
+                    }
+                    break;
+                }
+            }
+        }
+
+        // Respec button hover
+        if (this.stageRespecBounds) {
+            const b = this.stageRespecBounds;
+            if (x >= b.x && x <= b.x + b.w &&
+                y >= b.y && y <= b.y + b.h) {
+                overInteractive = true;
             }
         }
 
@@ -869,7 +1010,6 @@ CirclesGame.prototype.handleHover = function (event) {
             y >= btn.y &&
             y <= btn.y + btn.size) {
             hoveredIndex = i;
-            // Pointer cursor only for non-disabled buttons
             if (!btn.disabled) {
                 overInteractive = true;
             }
@@ -879,7 +1019,6 @@ CirclesGame.prototype.handleHover = function (event) {
 
     this.hoveredUpgradeIndex = hoveredIndex;
 
-    // Pointer if on stages button or an enabled upgrade button, default otherwise
     if (overInteractive) {
         this.canvas.style.cursor = "pointer";
     } else {
@@ -947,6 +1086,38 @@ CirclesGame.prototype.resize = function () {
         // Clear with logical size
         this.ctx.clearRect(0, 0, targetWidth, targetHeight);
     }
+};
+
+CirclesGame.prototype.getActiveStageIndexSafe = function () {
+    const count = this.stageCount || 9;
+    let idx = (typeof this.activeStageIndex === "number") ? this.activeStageIndex : 0;
+    if (idx < 0 || idx >= count) {
+        idx = 0;
+    }
+    return idx;
+};
+
+CirclesGame.prototype.isNoUpgradesStage = function () {
+    // Stage 7: no upgrades
+    return this.getActiveStageIndexSafe() === 7;
+};
+
+CirclesGame.prototype.isNoLoopUpgradeStage = function () {
+    // Stage 2: no upgrade #2
+    const idx = this.getActiveStageIndexSafe();
+    return idx === 2 || this.isNoUpgradesStage();
+};
+
+CirclesGame.prototype.isNoLoopMultStage = function () {
+    // Stage 5: no mult bonus from loops
+    const idx = this.getActiveStageIndexSafe();
+    return idx === 5;
+};
+
+CirclesGame.prototype.hasHighRingPenaltyStage = function () {
+    // Stage 1: higher rings penalized by 10% per ring level
+    const idx = this.getActiveStageIndexSafe();
+    return idx === 1;
 };
 
 ///////////////////////////////////////////////////////
@@ -1103,3 +1274,4 @@ CirclesGame.prototype.loadLocal = function () {
         return false;
     }
 };
+

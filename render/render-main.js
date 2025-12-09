@@ -1,7 +1,25 @@
 // render-main.js
 
-CirclesGame.prototype.ringColor = function (i) {
-    const palette = [
+CirclesGame.prototype.ringColor = function (ringIndex, stageIndex) {
+    // Default to the current active stage if none provided
+    if (typeof stageIndex !== "number") {
+        stageIndex = (typeof this.activeStageIndex === "number")
+            ? this.activeStageIndex
+            : 0;
+    }
+
+    // If per stage palettes exist, use them
+    if (typeof STAGE_PALETTES !== "undefined" &&
+        Array.isArray(STAGE_PALETTES) &&
+        STAGE_PALETTES[stageIndex] &&
+        STAGE_PALETTES[stageIndex].length > 0) {
+
+        const palette = STAGE_PALETTES[stageIndex];
+        return palette[ringIndex % palette.length];
+    }
+
+    // Fallback global palette
+    const fallback = [
         "#70ffa3",
         "#6ef4ff",
         "#a98bff",
@@ -9,8 +27,9 @@ CirclesGame.prototype.ringColor = function (i) {
         "#ffc857",
         "#f25f5c"
     ];
-    return palette[i % palette.length];
+    return fallback[ringIndex % fallback.length];
 };
+
 
 CirclesGame.prototype.draw = function () {
     const ctx = this.ctx;
@@ -186,11 +205,12 @@ CirclesGame.prototype.draw = function () {
         }
     }
 
-    const usedSlots = Math.min(visibleIndices.length, MAX_SLOTS);
+    const stageSlots = this.getStageLoopSlots(this.activeStageIndex);
+    const usedSlots = Math.min(visibleIndices.length, stageSlots);
 
     // Sphere opacity: 0 at zero, up to 1 when all slots filled
     const opacityFactor = usedSlots > 0
-        ? (usedSlots / MAX_SLOTS)
+        ? (usedSlots / stageSlots)
         : 0.0;
 
     // ===========================
@@ -245,8 +265,8 @@ CirclesGame.prototype.draw = function () {
     if (showMainSphere) {
         if (runAnimOrStatic) {
             // During flash/shrink/park: visually fill ALL latitude bands.
-            for (let slot = 0; slot < MAX_SLOTS; slot++) {
-                const tSlot = MAX_SLOTS === 1 ? 0.5 : slot / (MAX_SLOTS - 1);
+            for (let slot = 0; slot < stageSlots; slot++) {
+                const tSlot = stageSlots === 1 ? 0.5 : slot / (stageSlots - 1);
                 const lat = (0.5 - tSlot) * 2 * maxLat;
 
                 if (lat <= -Math.PI / 2 || lat >= Math.PI / 2) {
@@ -259,7 +279,7 @@ CirclesGame.prototype.draw = function () {
                 const ry = sphereRadius * 0.55 * Math.abs(k);
 
                 const centerY = cySphere + yOffset;
-                const col = this.ringColor(slot);
+                const col = this.ringColor(slot, this.activeStageIndex);
 
                 // Background ellipse
                 ctx.lineWidth = 2;
@@ -281,7 +301,7 @@ CirclesGame.prototype.draw = function () {
                 const ringIndex = visibleIndices[slot];
                 const ring = this.rings[ringIndex];
 
-                const t = MAX_SLOTS === 1 ? 0.5 : slot / (MAX_SLOTS - 1);
+                const t = stageSlots === 1 ? 0.5 : slot / (stageSlots - 1);
                 const lat = (0.5 - t) * 2 * maxLat;
 
                 if (lat <= -Math.PI / 2 || lat >= Math.PI / 2) {
@@ -294,7 +314,7 @@ CirclesGame.prototype.draw = function () {
                 const ry = sphereRadius * 0.55 * Math.abs(k);
 
                 const centerY = cySphere + yOffset;
-                const col = this.ringColor(ringIndex);
+                const col = this.ringColor(ringIndex, this.activeStageIndex);
 
                 // Background ellipse
                 ctx.lineWidth = 2;
@@ -345,7 +365,16 @@ CirclesGame.prototype.draw = function () {
 
                 // Multiplier label for higher rings with nonzero progress
                 if (!runAnimOrStatic && ringIndex > 0 && displayProgress > 0) {
-                    const term = displayMultScale * (displayProgress + 1);
+                    // Mirror safe-mult logic here so the label matches the real math.
+                    const hasMultFloor = Array.isArray(this.stagePointLevels) &&
+                        this.stagePointLevels[3] > 0;
+
+                    let loopsHere = displayProgress + 1;
+                    if (hasMultFloor && loopsHere < 4) {
+                        loopsHere = 4;
+                    }
+
+                    const term = displayMultScale * loopsHere;
                     const instMult = Math.sqrt(Math.max(0, term));
 
                     let displayMult;

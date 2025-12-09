@@ -98,29 +98,51 @@ CirclesGame.prototype.renderStagesList = function () {
         const isActive = this.activeStageIndex === i;
         const isFinalStage = i === lastIndex;
 
-        let label = "Stage " + (i + 1);
-        let status = isComplete ? "✓ complete" : "not completed";
+        const label = "Stage " + (i + 1);
 
         let locked = false;
 
         // Once a stage is completed, it is locked forever
         if (isComplete) {
             locked = true;
-            status = "completed (locked)";
         }
 
         // Final stage requires all earlier stages completed
         if (isFinalStage && !allBeforeLastComplete) {
             locked = true;
-            status = "locked (complete all previous stages)";
         }
 
         // After a completion, you must pick a different stage;
         // the just-completed stage cannot be chosen again.
         if (this.requireStageChange && isActive) {
             locked = true;
-            status = "choose another stage to continue";
         }
+
+        // Description + point reward
+        const desc = (typeof this.getStageDescription === "function")
+            ? this.getStageDescription(i)
+            : (isFinalStage ? "Final challenge." : "Stage challenge.");
+
+        let pts = 0;
+        if (typeof this.getStagePointsForStage === "function") {
+            pts = this.getStagePointsForStage(i) || 0;
+        }
+
+        let statusParts = [desc];
+
+        if (pts > 0) {
+            statusParts.push(`+${pts} pts`);
+        }
+
+        if (isFinalStage && !allBeforeLastComplete) {
+            statusParts.push("locked (complete all previous stages)");
+        } else if (this.requireStageChange && isActive) {
+            statusParts.push("choose another stage to continue");
+        } else if (isComplete) {
+            statusParts.push("completed");
+        }
+
+        const status = statusParts.join(" · ");
 
         btn.textContent = label + "  -  " + status;
 
@@ -207,14 +229,67 @@ CirclesGame.prototype.startStage = function (stageIndex) {
     this.rings[0].solid = false;
     this.rings[0].multAverage = null;
 
-    this.totalUnits = 0;
+        this.totalUnits = 0;
     this.lastTime = performance.now();
     this.lastDt = 0;
     this.loopRate0 = 0;
 
+    // Reset bases to global defaults first
+    this.baseLoopThreshold = this.defaultBaseLoopThreshold;
+    this.baseBaseRate = this.defaultBaseBaseRate;
+    this.baseMultScale = this.defaultBaseMultScale;
+
     this.loopThreshold = this.baseLoopThreshold;
     this.multScale = this.baseMultScale;
     this.upgradeLevels = [0, 0, 0, 0];
+
+    // Clear any per-stage flags that might matter later
+    this.stageSpecialCostScale = 1.0;
+
+    // Stage specific handicaps
+    switch (stageIndex) {
+        case 0:
+            // Nothing special, perfectly normal
+            break;
+
+        case 1:
+            // Stage 1: handled in update() via hasHighRingPenaltyStage()
+            // (higher rings have reduced multiplier contribution)
+            break;
+
+        case 2:
+            // Stage 2: no upgrade 2 (mult upgrade)
+            // Enforced in isNoMultUpgradeStage(), buyUpgrade, and computeMultScale
+            break;
+
+        case 3:
+            // Stage 3: 50 loops to complete (handled in getStageLoopSlots)
+            break;
+
+        case 4:
+            // Stage 4: increased cost scaling on all upgrades by 1.5x
+            this.stageSpecialCostScale = 1.5;
+            break;
+
+        case 5:
+            // Stage 5: no mult bonus from loops (handled in update())
+            break;
+
+        case 6:
+            // Stage 6: threshold starts at 100
+            this.baseLoopThreshold = 100;
+            this.loopThreshold = 100;
+            break;
+
+        case 7:
+            // Stage 7: no upgrades at all
+            // Enforced in isNoUpgradesStage() and drawUpgradeButtons/buyUpgrade
+            break;
+
+        case 8:
+            // Stage 8: 100 loops to complete (handled in getStageLoopSlots)
+            break;
+    }
 
     // Clear run-complete animation state
     if (this.runCompleteAnim) {
@@ -420,14 +495,14 @@ CirclesGame.prototype.drawCompletedStageSpheres = function (ctx, cxBase, cySpher
         roll = baseRoll + Math.sin(tLocal * 0.19 * ((basePhase) + 1 / 2) * 1.3) * 0.4;
 
         // Latitude rings: same count and thickness as main sphere
-        for (let slot = 0; slot < MAX_SLOTS; slot++) {
-            const tSlot = MAX_SLOTS === 1 ? 0.5 : slot / (MAX_SLOTS - 1);
+        for (let slot = 0; slot < LOOPS[stageIndex]; slot++) {
+            const tSlot = LOOPS[stageIndex] === 1 ? 0.5 : slot / (LOOPS[stageIndex] - 1);
             const lat = (0.5 - tSlot) * 2 * maxLat;
             if (lat <= -Math.PI / 2 || lat >= Math.PI / 2) {
                 continue;
             }
 
-            const col = this.ringColor(slot);
+            const col = this.ringColor(slot, stageIndex);
             drawRing3D(sx, sy, smallRadius, lat, yaw, pitch, roll, col);
         }
 
@@ -439,7 +514,7 @@ CirclesGame.prototype.drawCompletedStageSpheres = function (ctx, cxBase, cySpher
 // It appears only when at least one stage is completed.
 CirclesGame.prototype.drawStagesButton = function (ctx, w, h) {
     // Only show if at least one stage is completed
-    if (!this.stageCompleted || !this.stageCompleted.some(Boolean)) {
+    if (!this.stageCompleted || !this.stageCompleted.some(Boolean) || this.requireStageChange) {
         this.stagesButtonBounds = null;
         this.stagesButtonUnlocked = false;
         return;
@@ -485,6 +560,9 @@ CirclesGame.prototype.drawStagesModal = function (ctx, w, h) {
     if (!this.stagesModalVisible && !anim) {
         this.stageRowBounds = [];
         this.stageModalCloseBounds = null;
+        this.stageMetaButtons = [];
+        this.stageRespecBounds = null;
+        this.hoveredStageMetaIndex = null;
         return;
     }
 
@@ -510,6 +588,9 @@ CirclesGame.prototype.drawStagesModal = function (ctx, w, h) {
     if (!this.stagesModalVisible && !anim) {
         this.stageRowBounds = [];
         this.stageModalCloseBounds = null;
+        this.stageMetaButtons = [];
+        this.stageRespecBounds = null;
+        this.hoveredStageMetaIndex = null;
         return;
     }
 
@@ -543,21 +624,40 @@ CirclesGame.prototype.drawStagesModal = function (ctx, w, h) {
     // Stage 9 (full-width) height
     const stage9Height = cardSize;
 
-    // Final modal height
+    // Modal height (stage grid + final card)
     const modalH =
         padding +
         titleHeight +
         titleGap +
         gridInnerHeight +
-        rowGap +          // gap before Stage 9
+        rowGap +
         stage9Height +
         padding;
 
     // Points panel constants
     const pointsGap = 12;
-    const pointsHeight = 80;
 
-    // Center modal vertically (space added for points panel)
+    // Meta layout (we use this to compute the points panel height)
+    const metaCols = 4;
+    const metaRows = 2;
+    const metaGap = 10;
+
+    // We have 4 upgrade columns and a respec area 2 columns wide
+    // Total inner width = 6 * metaSize + 5 * metaGap
+    const availableWidthForMeta = modalW - padding * 2;
+    const metaSize = Math.max(
+        30,
+        Math.floor((availableWidthForMeta - 5 * metaGap) / 6)
+    );
+
+    const metaGridHeight = metaRows * metaSize + (metaRows - 1) * metaGap;
+
+    const pointsTitleBlockHeight = 60;
+    const pointsBottomPadding = padding;
+
+    const pointsHeight = pointsTitleBlockHeight + metaGridHeight + pointsBottomPadding;
+
+    // Center modal+points vertically
     const x = (w - modalW) / 2;
     const y = (h - (modalH + pointsHeight + pointsGap)) / 2;
 
@@ -576,18 +676,15 @@ CirclesGame.prototype.drawStagesModal = function (ctx, w, h) {
         const raw = Math.max(0, Math.min(1, anim.t / anim.duration));
         const dir = anim.opening ? raw : 1 - raw; // 0 -> 1 opening, 1 -> 0 closing
 
-        // Two-phase animation:
-        // phase 1 (0..0.5): grow width from 0 to 1, height up to thin strip
-        // phase 2 (0.5..1): keep width ~1, grow height from thin strip to 1
-        const phase1 = Math.min(1, dir * 2);       // 0..1
-        const phase2 = Math.max(0, dir * 2 - 1);   // 0..1
-
         function easeOutQuad(t) {
             return t * (2 - t);
         }
 
-        const sWidth = easeOutQuad(phase1);        // width scaling
-        const thinFrac = 0.05;                     // relative thickness of the "line"
+        const phase1 = Math.min(1, dir * 2);       // 0..1
+        const phase2 = Math.max(0, dir * 2 - 1);   // 0..1
+
+        const sWidth = easeOutQuad(phase1);
+        const thinFrac = 0.05;
         const heightPhase1 = thinFrac * sWidth;
         const heightPhase2 = easeOutQuad(phase2);
         const sHeight = heightPhase1 + (1 - thinFrac) * heightPhase2;
@@ -595,13 +692,11 @@ CirclesGame.prototype.drawStagesModal = function (ctx, w, h) {
         scaleX = sWidth;
         scaleY = sHeight;
 
-        // Guard against degenerate frame
         if (scaleX < 0.001 || scaleY < 0.001) {
             return;
         }
     }
 
-    // Everything below (modal + grid + stage 9 + points) is drawn under a scale transform
     const cx = x + modalW / 2;
     const cy = y + (modalH + pointsGap + pointsHeight) / 2;
 
@@ -629,6 +724,8 @@ CirclesGame.prototype.drawStagesModal = function (ctx, w, h) {
 
     this.stageModalCloseBounds = null;
     this.stageRowBounds = [];
+    this.stageMetaButtons = [];
+    this.stageRespecBounds = null;
 
     // Grid origin
     const gridX = x + padding;
@@ -652,46 +749,60 @@ CirclesGame.prototype.drawStagesModal = function (ctx, w, h) {
         const canResume = isActive && !isComplete && !this.requireStageChange;
 
         let locked = false;
-        let statusText = isComplete ? "Completed" : "Available";
 
-        // Once a stage is completed, it is locked forever
         if (isComplete) {
             locked = true;
         }
 
-        // Final stage requires all earlier stages completed
         if (idx === lastIndex && !allBeforeLastComplete) {
             locked = true;
-            statusText = "Locked";
         }
 
-        // After a completion, you must pick a different stage;
-        // the just-completed stage cannot be chosen again.
         if (this.requireStageChange && isActive) {
             locked = true;
-            statusText = "Pick another";
         }
 
-        if (canResume) {
-            statusText = "Resume";
+        // Brief challenge description
+        const desc = (typeof this.getStageDescription === "function")
+            ? this.getStageDescription(idx)
+            : (idx === lastIndex ? "Final challenge." : "Stage challenge.");
+
+        // Point reward
+        let pts = 0;
+        if (typeof this.getStagePointsForStage === "function") {
+            pts = this.getStagePointsForStage(idx) || 0;
+        }
+
+        // Second line: status + points
+        let pointsLine = "";
+        if (isComplete) {
+            pointsLine = pts > 0 ? `✓ complete  ·  +${pts} pts` : "✓ complete";
+        } else if (idx === lastIndex && !allBeforeLastComplete) {
+            pointsLine = pts > 0 ? `locked  ·  +${pts} pts` : "locked";
+        } else if (canResume) {
+            pointsLine = pts > 0 ? `resume  ·  +${pts} pts` : "resume";
+        } else if (pts > 0) {
+            pointsLine = `+${pts} pts`;
         }
 
         let fillStyle;
         let strokeStyle;
         let titleColor = "#f6f6ff";
-        let statusColor = "#d0d0ff";
+        let descColor = "#d0d0ff";
+        let pointsColor = "#d0d0ff";
 
         if (canResume) {
-            // Active in-progress stage: green tint
             fillStyle = "rgba(10, 40, 20, 0.98)";
             strokeStyle = "rgba(140, 255, 180, 0.98)";
             titleColor = "#c8ffc8";
-            statusColor = "#9cffb0";
+            descColor = "#9cffb0";
+            pointsColor = "#9cffb0";
         } else if (isComplete) {
             fillStyle = "rgba(60,60,60,0.6)";
             strokeStyle = "rgba(150,150,150,0.6)";
             titleColor = "#b0b0b0";
-            statusColor = "#c0c0c0";
+            descColor = "#c0c0c0";
+            pointsColor = "#c0c0c0";
         } else if (locked) {
             fillStyle = "rgba(10,10,20,0.7)";
             strokeStyle = "rgba(120,140,170,0.8)";
@@ -715,15 +826,23 @@ CirclesGame.prototype.drawStagesModal = function (ctx, w, h) {
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
 
-        ctx.font = "20px 'Blockletter'";
+        // Title: "Stage N"
+        ctx.font = "28px 'Blockletter'";
         ctx.fillStyle = titleColor;
-        ctx.fillText("Stage " + (idx + 1), cardX + cardW / 2, cardY + cardH * 0.35);
+        ctx.fillText("Stage " + (idx + 1), cardX + cardW / 2, cardY + cardH * 0.28);
 
-        ctx.font = "14px 'Blockletter'";
-        ctx.fillStyle = statusColor;
-        ctx.fillText(statusText, cardX + cardW / 2, cardY + cardH * 0.65);
+        // Middle line: brief description
+        ctx.font = "16px 'Blockletter'";
+        ctx.fillStyle = descColor;
+        ctx.fillText(desc, cardX + cardW / 2, cardY + cardH * 0.50);
 
-        // Do not allow interaction while animating
+        // Bottom line: points (and status if any)
+        if (pointsLine) {
+            ctx.font = "18px 'Blockletter'";
+            ctx.fillStyle = pointsColor;
+            ctx.fillText(pointsLine, cardX + cardW / 2, cardY + cardH * 0.72);
+        }
+
         if (!locked && allowClicks) {
             this.stageRowBounds.push({
                 x: cardX,
@@ -755,7 +874,7 @@ CirclesGame.prototype.drawStagesModal = function (ctx, w, h) {
             gridY +
             (rows * cardSize) +
             ((rows - 1) * rowGap) +
-            rowGap;       // spacing after row 2
+            rowGap;
 
         const stage9W = gridInnerWidth;
         const stage9H = cardSize;
@@ -763,7 +882,7 @@ CirclesGame.prototype.drawStagesModal = function (ctx, w, h) {
         drawCard(idx, stage9X, stage9Y, stage9W, stage9H);
     }
 
-    // ===== POINTS PANEL (same width as modal, included in scale) =====
+    // ===== POINTS PANEL (meta-upgrades + big respec) =====
     const pointsX = x;
     const pointsY = y + modalH + pointsGap;
 
@@ -776,24 +895,296 @@ CirclesGame.prototype.drawStagesModal = function (ctx, w, h) {
     ctx.strokeStyle = "rgba(200,230,255,0.95)";
     ctx.stroke();
 
-    // Points text
-    const totalPoints = this.totalUnits || 0;
+    const stagePoints = (typeof this.stagePoints === "number") ? this.stagePoints : 0;
 
-    ctx.textAlign = "left";
+    // Centered title + value
+    ctx.textAlign = "center";
     ctx.textBaseline = "top";
-    ctx.font = "24px 'Blockletter'";
+    ctx.font = "22px 'Blockletter'";
     ctx.fillStyle = "#f6f6ff";
-    ctx.fillText("POINTS", pointsX + 10, pointsY + 10);
+    ctx.fillText("POINTS", pointsX + modalW / 2, pointsY + 8);
 
-    ctx.textAlign = "right";
-    ctx.textBaseline = "bottom";
     ctx.font = "20px 'Blockletter'";
     ctx.fillStyle = "#ffd2ff";
     ctx.fillText(
-        totalPoints.toLocaleString(),
-        pointsX + modalW - 10,
-        pointsY + pointsHeight - 12
+        stagePoints.toLocaleString(),
+        pointsX + modalW / 2,
+        pointsY + 8 + 26
     );
 
-    ctx.restore(); // end modal+points scaling block
+    // Meta-upgrade buttons grid + big respec on the right
+
+    // Width of the 4-column upgrade grid
+    const metaGridWidth = metaCols * metaSize + (metaCols - 1) * metaGap;
+    const metaGridHeightDraw = metaGridHeight; // same as computed earlier
+
+    // Respec spans 2 columns and both rows
+    const respecW = metaSize * 2 + metaGap;
+    const respecH = metaGridHeightDraw;
+
+    const totalInnerWidth = metaGridWidth + metaGap + respecW;
+
+    // Center all content horizontally, tuck it under the title/value
+    const metaGridX = pointsX + (modalW - totalInnerWidth) / 2;
+    const metaGridY = pointsY + pointsTitleBlockHeight; // under title + value
+
+    const hasMetaMethods = typeof this.getStagePointUpgradeLabel === "function";
+
+        this.stageMetaButtons = [];
+    this.stageRespecBounds = null;
+
+    for (let i = 0; i < 8; i++) {
+        const row = Math.floor(i / metaCols);
+        const col = i % metaCols;
+
+        const bx = metaGridX + col * (metaSize + metaGap);
+        const by = metaGridY + row * (metaSize + metaGap);
+
+        const owned = Array.isArray(this.stagePointLevels) && this.stagePointLevels[i] > 0;
+        const cost = (typeof this.getStagePointUpgradeCost === "function")
+            ? this.getStagePointUpgradeCost(i)
+            : 1;
+        const affordable = stagePoints >= cost;
+
+        let fillStyle;
+        let strokeStyle;
+        let labelColor;
+
+        if (owned) {
+            fillStyle = "rgba(40,70,40,0.95)";
+            strokeStyle = "rgba(150,255,180,0.95)";
+            labelColor = "#c8ffc8";
+        } else if (affordable) {
+            fillStyle = "rgba(20,30,45,0.95)";
+            strokeStyle = "rgba(200,230,255,0.95)";
+            labelColor = "#f6f6ff";
+        } else {
+            fillStyle = "rgba(15,15,25,0.85)";
+            strokeStyle = "rgba(120,130,150,0.7)";
+            labelColor = "#a0a0b0";
+        }
+
+        ctx.beginPath();
+        ctx.rect(bx, by, metaSize, metaSize);
+        ctx.fillStyle = fillStyle;
+        ctx.fill();
+
+        ctx.lineWidth = owned ? 2 : 1;
+        ctx.strokeStyle = strokeStyle;
+        ctx.stroke();
+
+        // Short label + cost inside
+
+        const cxBtn = bx + metaSize / 2;
+        const labelY = by + metaSize * 0.33;
+        const costY = by + metaSize * 0.68;
+
+        const label = hasMetaMethods
+            ? this.getStagePointUpgradeLabel(i)
+            : ("U" + (i + 1));
+
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+
+        // Main text: label
+        ctx.font = "16px 'Blockletter'";
+        ctx.fillStyle = labelColor;
+        ctx.fillText(label, cxBtn, labelY);
+
+        // Cost, same font size + color as label
+        const costText = cost.toString();
+        ctx.font = "26px 'Blockletter'";
+        ctx.fillStyle = labelColor;
+        ctx.fillText(costText, cxBtn, costY);
+
+        this.stageMetaButtons.push({
+            x: bx,
+            y: by,
+            w: metaSize,
+            h: metaSize,
+            index: i
+        });
+    }
+
+    // Big RESPEC button: 2 columns wide, spans both rows
+    const respecX = metaGridX + metaGridWidth + metaGap;
+    const respecY = metaGridY;
+
+    ctx.beginPath();
+    ctx.rect(respecX, respecY, respecW, respecH);
+    ctx.fillStyle = "rgba(40,20,20,0.95)";
+    ctx.fill();
+
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(255,160,160,0.95)";
+    ctx.stroke();
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = "22px 'Blockletter'";
+    ctx.fillStyle = "#ffd0d0";
+    ctx.fillText(
+        "RESPEC",
+        respecX + respecW / 2,
+        respecY + respecH / 2
+    );
+
+    ctx.font = "14px 'Blockletter'";
+    ctx.fillStyle = "#ffb4b4";
+    ctx.fillText(
+        "(Resets current stage)",
+        respecX + respecW / 2,
+        respecY + respecH / 2 + 20
+    )
+
+    this.stageRespecBounds = {
+        x: respecX,
+        y: respecY,
+        w: respecW,
+        h: respecH
+    };
+
+    // Tooltip for hovered meta-upgrade
+    if (typeof this.hoveredStageMetaIndex === "number" &&
+        this.hoveredStageMetaIndex >= 0 &&
+        this.hoveredStageMetaIndex < 8 &&
+        typeof this.getStagePointTooltipInfo === "function") {
+
+        const tip = this.getStagePointTooltipInfo(this.hoveredStageMetaIndex);
+        const lines = Array.isArray(tip.lines) ? tip.lines : [];
+        const title = tip.title || "";
+
+        // Find the corresponding button bounds for positioning
+        const btn = this.stageMetaButtons &&
+            this.stageMetaButtons.find(b => b.index === this.hoveredStageMetaIndex);
+
+            // Tooltip for hovered meta-upgrade
+        if (typeof this.hoveredStageMetaIndex === "number" &&
+            this.hoveredStageMetaIndex >= 0 &&
+            this.hoveredStageMetaIndex < 8 &&
+            typeof this.getStagePointTooltipInfo === "function") {
+
+            const idx = this.hoveredStageMetaIndex;
+            const tip = this.getStagePointTooltipInfo(idx);
+            const lines = Array.isArray(tip.lines) ? tip.lines : [];
+            const title = tip.title || "";
+
+            // Ownership / cost / affordability
+            const owned = Array.isArray(this.stagePointLevels) &&
+                this.stagePointLevels[idx] > 0;
+            const cost = (typeof this.getStagePointUpgradeCost === "function")
+                ? this.getStagePointUpgradeCost(idx)
+                : 1;
+
+            // We treat meta as single-purchase, so "purchased" once owned
+            const hintText = owned ? "purchased" : "click to buy";
+
+            // Find the corresponding button bounds for positioning
+            const btn = this.stageMetaButtons &&
+                this.stageMetaButtons.find(b => b.index === idx);
+
+            if (btn) {
+                ctx.font = "14px 'Blockletter'";
+                let maxWidth = ctx.measureText(title).width;
+                for (let i = 0; i < lines.length; i++) {
+                    const wLine = ctx.measureText(lines[i]).width;
+                    if (wLine > maxWidth) {
+                        maxWidth = wLine;
+                    }
+                }
+
+                const paddingXTip = 10;
+                const paddingYTip = 8;
+                const lineHeight = 18;
+
+                // Extra space for "Cost: X" and hint line
+                const extraLines = 2;
+                const tipW = maxWidth + paddingXTip * 2;
+                const tipH = (lines.length + 1 + extraLines) * lineHeight + paddingYTip * 2;
+
+                const margin = 8;
+
+                // Start to the right of the button, vertically centered on it
+                let tipX = btn.x + btn.w + margin;
+                let tipY = btn.y + (btn.h - tipH) / 2;
+
+                const panelLeft = pointsX + 4;
+                const panelRight = pointsX + modalW - 4;
+                const panelTop = pointsY + 4;
+                const panelBottom = pointsY + pointsHeight - 4;
+
+                if (tipX + tipW > panelRight) {
+                    tipX = btn.x - tipW - margin;
+                }
+                if (tipX < panelLeft) {
+                    tipX = panelLeft;
+                }
+
+                if (tipY < panelTop) {
+                    tipY = panelTop;
+                }
+                if (tipY + tipH > panelBottom) {
+                    tipY = panelBottom - tipH;
+                }
+
+                ctx.beginPath();
+                ctx.rect(tipX, tipY, tipW, tipH);
+                ctx.fillStyle = "rgba(5, 8, 20, 0.98)";
+                ctx.fill();
+
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = "rgba(210,230,255,0.95)";
+                ctx.stroke();
+
+                ctx.textAlign = "left";
+                ctx.textBaseline = "top";
+
+                let dy = tipY + paddingYTip;
+
+                // Title
+                ctx.font = "16px 'Blockletter'";
+                ctx.fillStyle = "#ffffff";
+                ctx.fillText(title, tipX + paddingXTip, dy);
+
+                // Body lines
+                ctx.font = "14px 'Blockletter'";
+                ctx.fillStyle = "#d0e0ff";
+                for (let i = 0; i < lines.length; i++) {
+                    dy += lineHeight;
+                    const line = lines[i];
+                    if (!line) {
+                        continue;
+                    }
+                    ctx.fillText(line, tipX + paddingXTip, dy);
+                }
+
+                // Hint line near bottom: "click to buy" / "purchased"
+                ctx.font = "12px 'Blockletter'";
+                ctx.fillStyle = owned ? "#a8f0a8" : "#ffd2ff";
+                ctx.fillText(
+                    hintText,
+                    tipX + paddingXTip,
+                    tipY + tipH - paddingYTip - 12
+                );
+            }
+        }
+    }
+
+    ctx.restore();
 };
+
+CirclesGame.prototype.getStageDescription = function (idx) {
+    switch (idx) {
+        case 0: return "";
+        case 1: return "Higher rings give less mult.";
+        case 2: return "No loop upgrade";
+        case 3: return "40 loops";
+        case 4: return "Cost scaling increased";
+        case 5: return "No loop multiplier";
+        case 6: return "Threshold starts at 100";
+        case 7: return "No upgrades";
+        case 8: return "";
+        default: return "Stage challenge.";
+    }
+};
+

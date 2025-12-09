@@ -13,6 +13,10 @@ CirclesGame.prototype.drawUpgradeButtons = function (ctx, cx, cySphere, sphereRa
 
     const total = this.totalUnits;
 
+    const stageIdx = this.getActiveStageIndexSafe();
+    const noUpgradesStage = this.isNoUpgradesStage();
+    const noLoopUpgradeStage = this.isNoLoopUpgradeStage();
+
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
 
@@ -24,6 +28,17 @@ CirclesGame.prototype.drawUpgradeButtons = function (ctx, cx, cySphere, sphereRa
         const pos = positions[i];
 
         let isMax = false;
+
+        // Stage-based locks
+        let lockedByStage = false;
+        if (noUpgradesStage) {
+            // All upgrades disabled in stage 7
+            lockedByStage = true;
+        } else if (noLoopUpgradeStage && i === 1) {
+            // Upgrade #2 disabled in stage 2
+            lockedByStage = true;
+        }
+
         if (i === 1) {
             const currentLevel = this.upgradeLevels[1];
             const current = this.computeLoopThresholdForLevel(currentLevel);
@@ -43,6 +58,10 @@ CirclesGame.prototype.drawUpgradeButtons = function (ctx, cx, cySphere, sphereRa
             isMax = true;
         }
 
+        if (lockedByStage) {
+            isMax = true;
+        }
+
         const cost = isMax ? 0 : this.getUpgradeCost(i);
         const affordable = !isMax && total >= cost;
         const label = this.getUpgradeLabel(i);
@@ -51,24 +70,33 @@ CirclesGame.prototype.drawUpgradeButtons = function (ctx, cx, cySphere, sphereRa
             x: pos.x,
             y: pos.y,
             size: size,
-            disabled: isMax
+            disabled: isMax || lockedByStage
         };
 
         ctx.beginPath();
         ctx.rect(pos.x, pos.y, size, size);
-        ctx.fillStyle = isMax
-            ? "rgba(60, 60, 60, 0.6)"
-            : affordable
-                ? "rgba(15, 20, 40, 0.95)"
-                : "rgba(10, 10, 20, 0.7)";
+
+        if (lockedByStage && !globalLock) {
+            ctx.fillStyle = "rgba(30, 20, 20, 0.85)";
+        } else if (isMax) {
+            ctx.fillStyle = "rgba(60, 60, 60, 0.6)";
+        } else if (affordable) {
+            ctx.fillStyle = "rgba(15, 20, 40, 0.95)";
+        } else {
+            ctx.fillStyle = "rgba(10, 10, 20, 0.7)";
+        }
         ctx.fill();
 
-        ctx.lineWidth = affordable ? 2 : 1;
-        ctx.strokeStyle = isMax
-            ? "rgba(150,150,150,0.6)"
-            : affordable
-                ? "rgba(200, 230, 255, 0.95)"
-                : "rgba(120, 140, 170, 0.7)";
+        ctx.lineWidth = affordable && !lockedByStage ? 2 : 1;
+        if (lockedByStage && !globalLock) {
+            ctx.strokeStyle = "rgba(200, 120, 120, 0.9)";
+        } else if (isMax) {
+            ctx.strokeStyle = "rgba(150,150,150,0.6)";
+        } else if (affordable) {
+            ctx.strokeStyle = "rgba(200, 230, 255, 0.95)";
+        } else {
+            ctx.strokeStyle = "rgba(120, 140, 170, 0.7)";
+        }
         ctx.stroke();
 
         ctx.font = "18px 'Blockletter'";
@@ -77,7 +105,13 @@ CirclesGame.prototype.drawUpgradeButtons = function (ctx, cx, cySphere, sphereRa
         const cyBtn = pos.y + size / 2 - 20;
         ctx.fillText(label, cxBtn, cyBtn);
 
-        const costText = isMax ? "MAX" : this.formatCost(cost);
+        let costText;
+        if (lockedByStage && !globalLock) {
+            costText = "LOCKED";
+        } else {
+            costText = isMax ? "MAX" : this.formatCost(cost);
+        }
+
         ctx.font = "30px 'Blockletter'";
         ctx.fillText(costText, cxBtn, cyBtn + 40);
     }
