@@ -686,6 +686,207 @@ CirclesGame.prototype.update = function (dt) {
     this.saveLocal();
 };
 
+CirclesGame.prototype.handleClick = function (event) {
+    const rect = this.canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+
+    //////////////////////////////////////////////////////
+    // 1) Modal open: handle clicks inside modal only
+    //////////////////////////////////////////////////////
+    if (this.stagesModalVisible) {
+
+        // Close button
+        if (this.stageModalCloseBounds) {
+            const b = this.stageModalCloseBounds;
+            if (x >= b.x && x <= b.x + b.w &&
+                y >= b.y && y <= b.y + b.h) {
+                // Only allow closing if we are not forced to change stage
+                if (!this.requireStageChange) {
+                    this.hideStagesModal();
+                }
+                return;
+            }
+        }
+
+        // Stage cards
+        if (Array.isArray(this.stageRowBounds)) {
+            for (const row of this.stageRowBounds) {
+                if (x >= row.x && x <= row.x + row.w &&
+                    y >= row.y && y <= row.y + row.h) {
+
+                    const idx = row.index;
+                    const isCurrent = (idx === this.activeStageIndex);
+                    const isComplete = this.stageCompleted &&
+                        this.stageCompleted[idx];
+
+                    // If this is the current in-progress stage and we are
+                    // not in "must change stage" limbo, just resume:
+                    // close the modal and do not reset anything.
+                    if (isCurrent && !isComplete && !this.requireStageChange) {
+                        this.hideStagesModal();
+                        return;
+                    }
+
+                    // Otherwise, starting a stage behaves as before
+                    this.startStage(idx);
+                    this.hideStagesModal();
+                    return;
+                }
+            }
+        }
+
+        // Click outside modal:
+        // behave like clicking the current stage card.
+        if (this.stagesModalBounds) {
+            const b = this.stagesModalBounds;
+            const inside =
+                x >= b.x && x <= b.x + b.w &&
+                y >= b.y && y <= b.y + b.h;
+
+            if (!inside) {
+                // If we are forced to change stage, do not allow closing.
+                if (this.requireStageChange) {
+                    return;
+                }
+
+                const idx = (typeof this.activeStageIndex === "number")
+                    ? this.activeStageIndex
+                    : 0;
+                const isComplete = this.stageCompleted &&
+                    this.stageCompleted[idx];
+
+                // If the current stage is still in progress, treat this as
+                // "Resume": just close the modal.
+                if (!isComplete) {
+                    this.hideStagesModal();
+                    return;
+                }
+
+                // If for some reason the current stage is completed, fall
+                // back to restarting that stage.
+                this.startStage(idx);
+                this.hideStagesModal();
+                return;
+            }
+        }
+
+        // Modal is open and click was inside the modal background only.
+        return;
+    }
+
+    //////////////////////////////////////////////////////
+    // 2) Stages button at bottom
+    //////////////////////////////////////////////////////
+    if (this.stagesButtonBounds) {
+        const b = this.stagesButtonBounds;
+        if (x >= b.x && x <= b.x + b.w &&
+            y >= b.y && y <= b.y + b.h) {
+            this.showStagesModal();
+            return;
+        }
+    }
+
+    //////////////////////////////////////////////////////
+    // 3) Upgrade buttons
+    //////////////////////////////////////////////////////
+    for (let i = 0; i < this.upgradeButtons.length; i++) {
+        const btn = this.upgradeButtons[i];
+        if (!btn || btn.disabled) {
+            continue;
+        }
+
+        if (x >= btn.x &&
+            x <= btn.x + btn.size &&
+            y >= btn.y &&
+            y <= btn.y + btn.size) {
+            this.buyUpgrade(i);
+            return;
+        }
+    }
+};
+
+CirclesGame.prototype.handleHover = function (event) {
+    const rect = this.canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+
+    let overInteractive = false;
+    let hoveredIndex = null;
+
+    //////////////////////////////////////////////////////
+    // 1) Hover inside stages modal, if visible
+    //////////////////////////////////////////////////////
+    if (this.stagesModalVisible) {
+        // Close button hover
+        if (this.stageModalCloseBounds) {
+            const b = this.stageModalCloseBounds;
+            if (x >= b.x && x <= b.x + b.w &&
+                y >= b.y && y <= b.y + b.h) {
+                overInteractive = true;
+            }
+        }
+
+        // Stage rows hover
+        if (Array.isArray(this.stageRowBounds)) {
+            for (let i = 0; i < this.stageRowBounds.length; i++) {
+                const row = this.stageRowBounds[i];
+                if (x >= row.x && x <= row.x + row.w &&
+                    y >= row.y && y <= row.y + row.h) {
+                    overInteractive = true;
+                    break;
+                }
+            }
+        }
+
+        this.hoveredUpgradeIndex = null;
+        this.canvas.style.cursor = overInteractive ? "pointer" : "default";
+        return;
+    }
+
+    //////////////////////////////////////////////////////
+    // 2) Hover over stages button at bottom
+    //////////////////////////////////////////////////////
+    if (this.stagesButtonUnlocked && this.stagesButtonBounds) {
+        const b = this.stagesButtonBounds;
+        if (x >= b.x && x <= b.x + b.w &&
+            y >= b.y && y <= b.y + b.h) {
+            overInteractive = true;
+        }
+    }
+
+    //////////////////////////////////////////////////////
+    // 3) Hover over upgrade buttons (existing behavior)
+    //////////////////////////////////////////////////////
+    for (let i = 0; i < this.upgradeButtons.length; i++) {
+        const btn = this.upgradeButtons[i];
+        if (!btn) {
+            continue;
+        }
+
+        if (x >= btn.x &&
+            x <= btn.x + btn.size &&
+            y >= btn.y &&
+            y <= btn.y + btn.size) {
+            hoveredIndex = i;
+            // Pointer cursor only for non-disabled buttons
+            if (!btn.disabled) {
+                overInteractive = true;
+            }
+            break;
+        }
+    }
+
+    this.hoveredUpgradeIndex = hoveredIndex;
+
+    // Pointer if on stages button or an enabled upgrade button, default otherwise
+    if (overInteractive) {
+        this.canvas.style.cursor = "pointer";
+    } else {
+        this.canvas.style.cursor = "default";
+    }
+};
+
 ///////////////////////////////////////////////////////
 // Keyboard controls
 ///////////////////////////////////////////////////////

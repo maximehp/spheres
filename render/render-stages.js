@@ -416,8 +416,8 @@ CirclesGame.prototype.drawCompletedStageSpheres = function (ctx, cxBase, cySpher
 
         // Small animated offsets around the base pose, desynced per stage
         yaw = baseYaw + tLocal * 0.35;
-        pitch = basePitch + Math.sin(tLocal * 0.27 * basePhase) * 0.4;
-        roll = baseRoll + Math.sin(tLocal * 0.19 * basePhase * 1.3) * 0.4;
+        pitch = basePitch + Math.sin(tLocal * 0.27 * ((basePhase + 1) / 2)) * 0.4;
+        roll = baseRoll + Math.sin(tLocal * 0.19 * ((basePhase) + 1 / 2) * 1.3) * 0.4;
 
         // Latitude rings: same count and thickness as main sphere
         for (let slot = 0; slot < MAX_SLOTS; slot++) {
@@ -438,40 +438,43 @@ CirclesGame.prototype.drawCompletedStageSpheres = function (ctx, cxBase, cySpher
 // Draws the bottom “Stages” button inside the canvas.
 // It appears only when at least one stage is completed.
 CirclesGame.prototype.drawStagesButton = function (ctx, w, h) {
+    // Only show if at least one stage is completed
     if (!this.stageCompleted || !this.stageCompleted.some(Boolean)) {
         this.stagesButtonBounds = null;
+        this.stagesButtonUnlocked = false;
         return;
     }
 
-    const label = "Stages";
-    ctx.font = '22px "Blockletter"';
+    const label = "STAGES";
+
+    // Match modal title font
+    ctx.font = "20px 'Blockletter'";
     const textW = ctx.measureText(label).width;
 
-    const paddingX = 18;
-    const paddingY = 10;
-    const btnW = textW + paddingX * 2;
-    const btnH = 40;
+    const btnW = Math.max(150, textW * 2);
+    const btnH = 50;
 
     const x = (w - btnW) / 2;
-    const y = h - btnH - 20;
+    const y = h - btnH - 24;
 
-    // Save bounds for click detection
+    // Save bounds for click + hover detection
     this.stagesButtonBounds = { x, y, w: btnW, h: btnH };
+    this.stagesButtonUnlocked = true;
 
-    // Background
-    ctx.fillStyle = "rgba(0,0,0,0.55)";
-    if (ctx.roundRect) {
-        ctx.beginPath();
-        ctx.roundRect(x, y, btnW, btnH, 10);
-        ctx.fill();
-    } else {
-        ctx.fillRect(x, y, btnW, btnH);
-    }
+    // Panel, same vibe as modal and cards
+    ctx.beginPath();
+    ctx.rect(x, y, btnW, btnH);
+    ctx.fillStyle = "rgba(15,20,40,0.95)";
+    ctx.fill();
 
-    // Text
-    ctx.fillStyle = "#ffffff";
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(200,230,255,0.95)";
+    ctx.stroke();
+
+    // Label
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
+    ctx.fillStyle = "#f6f6ff";
     ctx.fillText(label, x + btnW / 2, y + btnH / 2);
 };
 
@@ -558,6 +561,13 @@ CirclesGame.prototype.drawStagesModal = function (ctx, w, h) {
     const x = (w - modalW) / 2;
     const y = (h - (modalH + pointsHeight + pointsGap)) / 2;
 
+    this.stagesModalBounds = {
+        x: x,
+        y: y,
+        w: modalW,
+        h: modalH
+    };
+
     // Compute animation-based scale factors
     let scaleX = 1;
     let scaleY = 1;
@@ -639,20 +649,45 @@ CirclesGame.prototype.drawStagesModal = function (ctx, w, h) {
         const isComplete = !!completedFlags[idx];
         const isActive = this.activeStageIndex === idx;
 
+        const canResume = isActive && !isComplete && !this.requireStageChange;
+
         let locked = false;
         let statusText = isComplete ? "Completed" : "Available";
 
-        if (isComplete) locked = true;
+        // Once a stage is completed, it is locked forever
+        if (isComplete) {
+            locked = true;
+        }
+
+        // Final stage requires all earlier stages completed
+        if (idx === lastIndex && !allBeforeLastComplete) {
+            locked = true;
+            statusText = "Locked";
+        }
+
+        // After a completion, you must pick a different stage;
+        // the just-completed stage cannot be chosen again.
         if (this.requireStageChange && isActive) {
             locked = true;
             statusText = "Pick another";
         }
 
-        let fillStyle, strokeStyle;
+        if (canResume) {
+            statusText = "Resume";
+        }
+
+        let fillStyle;
+        let strokeStyle;
         let titleColor = "#f6f6ff";
         let statusColor = "#d0d0ff";
 
-        if (isComplete) {
+        if (canResume) {
+            // Active in-progress stage: green tint
+            fillStyle = "rgba(10, 40, 20, 0.98)";
+            strokeStyle = "rgba(140, 255, 180, 0.98)";
+            titleColor = "#c8ffc8";
+            statusColor = "#9cffb0";
+        } else if (isComplete) {
             fillStyle = "rgba(60,60,60,0.6)";
             strokeStyle = "rgba(150,150,150,0.6)";
             titleColor = "#b0b0b0";
