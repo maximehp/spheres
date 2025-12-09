@@ -9,14 +9,14 @@ const STAGE_SPHERE_RADIUS_FACTOR = 0.18;    // radius of parked spheres relative
 // Stage points per stage index, 0..8
 const STAGE_POINTS = [1, 1, 1, 2, 2, 2, 2, 3, 0];
 
-const LOOPS = [12, 10, 18, 40, 10, 8, 12, 12, 100];
+const LOOPS = [12, 10, 6, 40, 18, 7, 12, 4, 100];
 
 // Per stage color palettes: STAGE_PALETTES[stageIndex][ringIndex]
 const STAGE_PALETTES = [
     // Stage 0
     ["#70ffa3", "#6ef4ff", "#a98bff", "#ff7bd9", "#ffc857", "#f25f5c"],
     // Stage 1
-    ["#ffb3ba", "#ffdfba", "#ffffba", "#baffc9", "#bae1ff"],
+    ["#c5e1a5", "#aed581", "#9ccc65", "#8bc34a", "#7cb342"],
     // Stage 2
     ["#ff6b6b", "#ffca57", "#ff9ff3", "#48dbff", "#1dffa1"],
     // Stage 3
@@ -24,7 +24,7 @@ const STAGE_PALETTES = [
     // Stage 4
     ["#f8bbd0", "#f48fb1", "#f06292", "#ec407a", "#d81b60"],
     // Stage 5
-    ["#c5e1a5", "#aed581", "#9ccc65", "#8bc34a", "#7cb342"],
+    ["#ffb3ba", "#ffdfba", "#ffffba", "#baffc9", "#bae1ff"],
     // Stage 6
     ["#d1c4e9", "#b39ddb", "#9575cd", "#7e57c2", "#673ab7"],
     // Stage 7

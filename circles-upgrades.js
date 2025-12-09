@@ -145,8 +145,8 @@ CirclesGame.prototype.getStagePointUpgradeCost = function (index) {
     switch (index) {
         case 0: return 1; // x2 speed
         case 1: return 1; // -1 threshold
-        case 2: return 2; // -1 loops
-        case 3: return 2; // safe mult
+        case 2: return 1; // -1 loops
+        case 3: return 1; // safe mult
         case 4: return 2; // x3 speed
         case 5: return 1; // cheap ups
         case 6: return 3; // loop x1.3
@@ -408,11 +408,13 @@ CirclesGame.prototype.computeBaseRate = function () {
 // computeLoopThresholdForLevel.
 // Here we also apply SP 1's static -1 AFTER everything else.
 CirclesGame.prototype.computeLoopThreshold = function () {
+    this._ensureStagePoints();
+
     // Here we apply SP 7 free +1 level first
     const rawLevel = this.upgradeLevels[1] || 0;
 
     let effectiveLevel;
-    if (this.isNoUpgradesStage()) {
+    if (this.isNoUpgradesStage() || this.isNoLoopUpgradeStage()) {
         effectiveLevel = 0;
     } else {
         effectiveLevel = this.stagePointLevels[7] ? rawLevel + 1 : rawLevel;
@@ -425,6 +427,13 @@ CirclesGame.prototype.computeLoopThreshold = function () {
         threshold = Math.max(7, threshold - 1);
     }
 
+    // Stage 9 (final stage): enforce minimum threshold 12
+    const count = this.stageCount || 9;
+    const lastIndex = count - 1;
+    if (this.activeStageIndex === lastIndex && threshold < 50) {
+        threshold = 50;
+    }
+
     return threshold;
 };
 
@@ -435,17 +444,6 @@ CirclesGame.prototype.computeMultScale = function () {
     this._ensureStagePoints();
 
     const base = this.baseMultScale;
-
-    // If this stage disables the mult-upgrade entirely
-    if (this.isNoLoopUpgradeStage()) {
-        let scale = base;
-
-        // SP 6: loop mult *1.3 still applies even if upgrade is disabled
-        if (this.stagePointLevels[6]) {
-            scale *= 1.3;
-        }
-        return Math.max(0.05, scale);
-    }
 
     const level = this.getEffectiveUpgradeLevel(2);
     const boost = this.getMetaBoostFactor();
@@ -475,7 +473,7 @@ CirclesGame.prototype.getUpgradeLabel = function (index) {
     } else if (index === 1) {
         return "loop *0.80";
     } else if (index === 2) {
-        return "mult x1.2";
+        return "mult x1.25";
     } else if (index === 3) {
         return "boost others";
     }
@@ -539,6 +537,8 @@ CirclesGame.prototype.getUpgradeTooltipInfo = function (index) {
 
         if (isMax) {
             info.lines.push("Already at minimum effective threshold.");
+        } else if (this.isNoLoopUpgradeStage() || this.activeStageIndex === 8) {
+            info.lines.push("Locked.");
         } else {
             info.lines.push(`Next level : ${next}`);
         }

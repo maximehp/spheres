@@ -30,6 +30,41 @@ CirclesGame.prototype.ringColor = function (ringIndex, stageIndex) {
     return fallback[ringIndex % fallback.length];
 };
 
+CirclesGame.prototype.getRingDisplayMultiplier = function (ringIndex, displayProgress, displayMultScale) {
+    const stageIndex = (typeof this.activeStageIndex === "number") ? this.activeStageIndex : 0;
+
+    // Meta-upgrade: "mult floor" (your slot 3) still applies
+    const hasMultFloor = Array.isArray(this.stagePointLevels) &&
+        this.stagePointLevels[3] > 0;
+
+    let loopsHere = displayProgress + 1;
+
+    if (hasMultFloor && loopsHere < 4) {
+        loopsHere = 4;
+    }
+
+    // Stage 5: no mult bonus from loops
+    // Keep a base multiplier from multScale, but loops should not increase it.
+    if (stageIndex === 5) {
+        loopsHere = 1;
+    }
+
+    // Stage 1: higher rings have reduced contribution
+    // Example: each outer ring is less effective; adjust loops toward 1.
+    if (stageIndex === 1 && ringIndex > 0) {
+        const penaltyPerRing = 0.5; // ring 1 = 50%, ring 2 = 25%, etc
+        const penalty = Math.pow(penaltyPerRing, ringIndex);
+        loopsHere = 1 + (loopsHere - 1) * penalty;
+    }
+
+    const term = displayMultScale * loopsHere;
+    if (term <= 0) {
+        return 1.0;
+    }
+
+    return Math.sqrt(term);
+};
+
 
 CirclesGame.prototype.draw = function () {
     const ctx = this.ctx;
@@ -365,21 +400,18 @@ CirclesGame.prototype.draw = function () {
 
                 // Multiplier label for higher rings with nonzero progress
                 if (!runAnimOrStatic && ringIndex > 0 && displayProgress > 0) {
-                    // Mirror safe-mult logic here so the label matches the real math.
-                    const hasMultFloor = Array.isArray(this.stagePointLevels) &&
-                        this.stagePointLevels[3] > 0;
-
-                    let loopsHere = displayProgress + 1;
-                    if (hasMultFloor && loopsHere < 4) {
-                        loopsHere = 4;
-                    }
-
-                    const term = displayMultScale * loopsHere;
-                    const instMult = Math.sqrt(Math.max(0, term));
+                    // Mirror safe-mult logic here so the label matches the real math,
+                    // including stage-specific behavior (Stage 1 / Stage 5).
+                    const instMult = this.getRingDisplayMultiplier(
+                        ringIndex,
+                        displayProgress,
+                        displayMultScale
+                    );
 
                     let displayMult;
 
                     if (!winActive && isSolid && !(spendAnim && fromRings && fromRings[ringIndex])) {
+                        // Smooth the displayed value while ring is solid and not in a spend tween
                         if (ring.multAverage == null) {
                             ring.multAverage = instMult;
                         } else {
@@ -447,41 +479,106 @@ CirclesGame.prototype.draw = function () {
     // ===========================
     if (this.winState && this.winState.active) {
         const tWin = this.winState.timer;
-        const D = this.winState.duration;
 
-        const alphaIn = Math.min(1, tWin * 2.4);
-        const alphaOut = Math.max(0, 1 - (tWin - 1.0) / 2.2);
-        const alpha = Math.min(alphaIn, alphaOut);
+        // Backdrop alpha just eases in once.
+        const backdropAlpha = Math.min(1, tWin * 2.0);
 
-        ctx.fillStyle = "rgba(255,255,255," + (0.28 * alpha) + ")";
+        ctx.fillStyle = "rgba(0,0,0," + (0.6 * backdropAlpha) + ")";
         ctx.fillRect(0, 0, w, h);
 
         const cxMid = w / 2;
-        const cyMid = h / 2 + 10;
+        const cyMid = h / 2;
         const baseR = Math.min(w, h) * 0.35;
+        const pulseLifetime = 1.4;
 
-        for (let i = 0; i < 6; i++) {
-            const p = (tWin * 1.3 + i * 0.15) % 1;
-            const r = baseR + p * baseR * 1.2;
+        // Pulses unchanged
+        for (let i = 0; i < this.winPulses.length; i++) {
+            const pulse = this.winPulses[i];
+            const pRaw = pulse.t / pulseLifetime;
+            if (pRaw <= 0 || pRaw > 1) {
+                continue;
+            }
 
-            ctx.beginPath();
-            ctx.arc(cxMid, cyMid, r, 0, Math.PI * 2);
-            ctx.lineWidth = 4 * (1 - p);
-            ctx.strokeStyle = "rgba(255,255,255," + ((1 - p) * 0.55 * alpha) + ")";
-            ctx.stroke();
+            const p1 = pRaw;
+            const p2 = Math.max(0, Math.min(1, pRaw * 0.7 + 0.3));
+
+            const drawRing = (prog) => {
+                const r = baseR + prog * baseR * 1.3;
+                const fade = (1 - prog);
+
+                ctx.beginPath();
+                ctx.arc(cxMid, cyMid, r, 0, Math.PI * 2);
+                ctx.lineWidth = 4 * fade;
+                ctx.strokeStyle = "rgba(255,255,255," + (0.45 * fade * backdropAlpha) + ")";
+                ctx.stroke();
+            };
+
+            drawRing(p1);
+            drawRing(p2);
         }
 
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
+
+        // ===========================
+        // MAIN WIN TEXT (NO FADE)
+        // ===========================
         ctx.font = '48px "Blockletter"';
+        ctx.lineWidth = 6;
+        ctx.strokeStyle = "rgba(0,0,0,0.9)";
+        ctx.strokeText("You're pretty good at spheres", cxMid, cyMid - 30);
 
-        ctx.lineWidth = 6 * alpha;
-        ctx.strokeStyle = "rgba(0,0,0," + (0.9 * alpha) + ")";
-        ctx.strokeText("You\'re pretty good at spheres", w / 2, h / 2);
+        ctx.fillStyle = "rgba(255,255,255,1)";
+        ctx.fillText("You're pretty good at spheres", cxMid, cyMid - 30);
 
-        ctx.fillStyle = "rgba(255,255,255," + alpha + ")";
-        ctx.fillText("You\'re pretty good at spheres", w / 2, h / 2);
+        // ===========================
+        // PLAYTIME LINE (NO FADE)
+        // ===========================
+        const playtimeLabel = "Playtime: " + this.formatPlayTime();
+
+        ctx.font = '28px "Blockletter"';
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = "rgba(0,0,0,0.9)";
+        ctx.strokeText(playtimeLabel, cxMid, cyMid + 24);
+
+        ctx.fillStyle = "rgba(255,255,255,1)";
+        ctx.fillText(playtimeLabel, cxMid, cyMid + 24);
+
+        // ===========================
+        // CLICK TO RESET (FADE IN ONLY)
+        // ===========================
+        const canReset = this.winState.timer >= (this.winClickDelay || 0);
+        if (canReset) {
+            const fadeT = this.winState.timer - this.winClickDelay;
+            const fadeDur = 1.0;
+            const resetAlpha = Math.min(1, fadeT / fadeDur);
+
+            const resetLabel = "Click anywhere to reset";
+
+            ctx.font = '22px "Blockletter"';
+            ctx.lineWidth = 3 * resetAlpha;
+            ctx.strokeStyle = "rgba(0,0,0," + (0.9 * resetAlpha) + ")";
+            ctx.strokeText(resetLabel, cxMid, cyMid + 64);
+
+            ctx.fillStyle = "rgba(255,255,255," + resetAlpha + ")";
+            ctx.fillText(resetLabel, cxMid, cyMid + 64);
+        }
     }
+
+    // FPS overlay
+    if (this.showFps && this.fps > 0) {
+        ctx.save();
+        ctx.font = "16px 'Blockletter'";
+        ctx.fillStyle = "#ffffff";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+
+        const text = this.fps.toFixed(1) + " FPS";
+        ctx.fillText(text, 10, 8);
+
+        ctx.restore();
+    }
+
 };
 
 CirclesGame.prototype.updateInfo = function () {
@@ -500,4 +597,20 @@ CirclesGame.prototype.updateInfo = function () {
             mult scale: <strong>${this.multScale.toFixed(3)}</strong>
         </div>
     `;
+};
+
+CirclesGame.prototype.formatPlayTime = function () {
+    const totalSeconds = Math.floor(this.totalPlayTime || 0);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    const pad = function (n) {
+        return n < 10 ? "0" + n : "" + n;
+    };
+
+    if (hours > 0) {
+        return hours + ":" + pad(minutes) + ":" + pad(seconds);
+    }
+    return minutes + ":" + pad(seconds);
 };

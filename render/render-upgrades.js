@@ -34,7 +34,7 @@ CirclesGame.prototype.drawUpgradeButtons = function (ctx, cx, cySphere, sphereRa
         if (noUpgradesStage) {
             // All upgrades disabled in stage 7
             lockedByStage = true;
-        } else if (noLoopUpgradeStage && i === 1) {
+        } else if ((noLoopUpgradeStage || this.activeStageIndex === 8) && i === 1) {
             // Upgrade #2 disabled in stage 2
             lockedByStage = true;
         }

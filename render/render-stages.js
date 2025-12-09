@@ -342,6 +342,21 @@ CirclesGame.prototype.startStage = function (stageIndex) {
     this.updateStagesToggleVisibility();
 };
 
+// Precomputed unit circle angles for trophy rings
+const TROPHY_STEPS = 12;  // bump down / up for quality vs speed
+
+const TROPHY_ANGLES = (function () {
+    const arr = [];
+    for (let i = 0; i <= TROPHY_STEPS; i++) {
+        const phi = (i / TROPHY_STEPS) * Math.PI * 2;
+        arr.push({
+            cos: Math.cos(phi),
+            sin: Math.sin(phi)
+        });
+    }
+    return arr;
+})();
+
 CirclesGame.prototype.drawCompletedStageSpheres = function (ctx, cxBase, cySphereBase, sphereRadiusBase, spinActive) {
     if (!this.completedStageSpheres || this.completedStageSpheres.length === 0) {
         return;
@@ -351,24 +366,158 @@ CirclesGame.prototype.drawCompletedStageSpheres = function (ctx, cxBase, cySpher
         spinActive = true;
     }
 
-    const dt = this.lastDt || 0.016; // per-frame time step
+    const dt = this.lastDt || 0.016;
 
     const orbitRadius = sphereRadiusBase * STAGE_ORBIT_RADIUS_FACTOR;
 
-    // Slightly larger than the shrink target so the fake sphere
-    // visually matches the parked "real" sphere.
     const TROPHY_RADIUS_SCALE = STAGE_SPHERE_RADIUS_FACTOR * 1.2;
     const smallRadius = sphereRadiusBase * TROPHY_RADIUS_SCALE;
+
+    const finalIndex = (this.stageCount || 9) - 1;
+    const isFinalStageActive = (typeof this.getActiveStageIndexSafe === "function")
+        ? (this.getActiveStageIndexSafe() === finalIndex)
+        : (this.activeStageIndex === finalIndex);
+
+    const orbitOffset = (isFinalStageActive && this.trophyOrbitAngle)
+        ? this.trophyOrbitAngle
+        : 0;
 
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.font = "12px 'Blockletter'";
 
     const maxLat = Math.PI * 0.45;
-    const STEPS = 12;
 
-    // Helper: draw one 3D-rotated ring as a polyline
-    function drawRing3D(cx, cy, R, lat, yaw, pitch, roll, color) {
+    // Optional: cap how many trophies we actually render
+    const MAX_TROPHIES = 24;
+    const spheres = this.completedStageSpheres;
+    const startIndex = Math.max(0, spheres.length - MAX_TROPHIES);
+
+    // ==============================
+    // Launch setup when win happens
+    // ==============================
+    const winActive = this.winState && this.winState.active;
+
+    // First frame where win is active: compute launch vectors for all spawned trophies
+    if (winActive && !this.trophyLaunchTriggered) {
+        this.trophyLaunchTriggered = true;
+
+        // Speed scales with sphere size so it looks good at any resolution
+        const baseSpeed = sphereRadiusBase * 3.0;
+
+        for (let sIdx = startIndex; sIdx < spheres.length; sIdx++) {
+            const s = spheres[sIdx];
+
+            const spawned = (s.spawned === undefined) ? true : s.spawned;
+            if (!spawned) {
+                continue;
+            }
+
+            const baseAngle = s.angle ?? 0;
+            const angle = baseAngle + orbitOffset;
+
+            const sx = cxBase + Math.cos(angle) * orbitRadius;
+            const sy = cySphereBase + Math.sin(angle) * orbitRadius;
+
+            // Tangent to the orbit: direction of travel if orbiting CCW
+            const dirX = -Math.sin(angle);
+            const dirY = Math.cos(angle);
+
+            s.launching = true;
+            s.launchX = sx;
+            s.launchY = sy;
+            s.vx = dirX * baseSpeed;
+            s.vy = dirY * baseSpeed;
+            s.launchAge = 0;
+            s.launchMaxLife = 2.0; // seconds until fully faded
+        }
+    }
+
+    // If win is no longer active, allow future launches (for a new run)
+    if (!winActive && this.trophyLaunchTriggered) {
+        this.trophyLaunchTriggered = false;
+    }
+
+    for (let sIdx = startIndex; sIdx < spheres.length; sIdx++) {
+        const s = spheres[sIdx];
+
+        // If this flag is not set, default to already spawned (for old saves)
+        const spawned = (s.spawned === undefined) ? true : s.spawned;
+        if (!spawned) {
+            continue;
+        }
+
+        ctx.save();
+
+        // Position and alpha factor are now split by whether the trophy has launched
+        let sx, sy;
+        let alphaFactor = 0.6;
+
+        if (s.launching && this.trophyLaunchTriggered) {
+            // Update launched position
+            s.launchAge = (s.launchAge || 0) + dt;
+            const maxLife = s.launchMaxLife || 2.0;
+
+            s.launchX += (s.vx || 0) * dt;
+            s.launchY += (s.vy || 0) * dt;
+
+            sx = s.launchX;
+            sy = s.launchY;
+
+            // Fade out over lifetime
+            const lifeFrac = Math.max(0, Math.min(1, s.launchAge / maxLife));
+            alphaFactor *= (1 - lifeFrac);
+
+            if (alphaFactor <= 0.001) {
+                ctx.restore();
+                continue;
+            }
+        } else {
+            // Normal orbiting behavior
+            const baseAngle = s.angle ?? 0;
+            const angle = baseAngle + orbitOffset;
+
+            sx = cxBase + Math.cos(angle) * orbitRadius;
+            sy = cySphereBase + Math.sin(angle) * orbitRadius;
+        }
+
+        // Always render completed trophies at some base opacity, modulated by launch fade
+        ctx.globalAlpha *= alphaFactor;
+
+        // Base gradient sphere
+        this.drawSphereBackground(ctx, sx, sy, smallRadius, 1.0);
+
+        const stageIndex = s.stage ?? 0;
+        const basePhase = stageIndex * 0.7;
+
+        const rotationOn = spinActive && (s.rotationEnabled !== false);
+
+        const baseYaw = 0;
+        const basePitch = 0.5;
+        const baseRoll = 0;
+
+        if (typeof s.spinT !== "number") {
+            s.spinT = 0;
+        }
+
+        // Only advance spin when rotation is on
+        if (rotationOn) {
+            s.spinT += dt;
+        }
+
+        const tLocal = s.spinT;
+
+        let yaw = baseYaw;
+        let pitch = basePitch;
+        let roll = baseRoll;
+
+        if (rotationOn) {
+            yaw = baseYaw + tLocal * 0.35;
+            pitch = basePitch + Math.sin(tLocal * 0.27 * ((basePhase + 1) / 2)) * 0.4;
+            roll = baseRoll + Math.sin(tLocal * 0.19 * ((basePhase) + 1 / 2) * 1.3) * 0.4;
+        }
+
+        // Precompute rotation matrix for this sphere
         const cosYaw = Math.cos(yaw);
         const sinYaw = Math.sin(yaw);
         const cosPitch = Math.cos(pitch);
@@ -376,134 +525,94 @@ CirclesGame.prototype.drawCompletedStageSpheres = function (ctx, cxBase, cySpher
         const cosRoll = Math.cos(roll);
         const sinRoll = Math.sin(roll);
 
-        const sinLat = Math.sin(lat);
-        const cosLat = Math.cos(lat);
-
-        // Circle radius in x–z plane at this latitude
-        const rLat = R * cosLat;
-        const yLat = R * sinLat;
-
-        const points = [];
-
-        for (let i = 0; i <= STEPS; i++) {
-            const phi = (i / STEPS) * Math.PI * 2;
-
-            // Unrotated point on latitude circle
-            let x = rLat * Math.cos(phi);
-            let y = yLat;
-            let z = rLat * Math.sin(phi);
-
-            // Yaw (around Y axis)
+        function rotatePoint(x, y, z) {
+            // Yaw (Y axis)
             let x1 = cosYaw * x + sinYaw * z;
             let z1 = -sinYaw * x + cosYaw * z;
             let y1 = y;
 
-            // Pitch (around X axis)
+            // Pitch (X axis)
             let y2 = cosPitch * y1 - sinPitch * z1;
             let z2 = sinPitch * y1 + cosPitch * z1;
             let x2 = x1;
 
-            // Roll (around Z axis)
+            // Roll (Z axis)
             let x3 = cosRoll * x2 - sinRoll * y2;
             let y3 = sinRoll * x2 + cosRoll * y2;
+            let z3 = z2;
 
-            points.push({
-                x: cx + x3,
-                y: cy + y3
-            });
+            return { x: sx + x3, y: sy + y3 };
         }
 
-        // Background stroke
-        ctx.beginPath();
-        for (let i = 0; i < points.length; i++) {
-            const p = points[i];
-            if (i === 0) {
-                ctx.moveTo(p.x, p.y);
-            } else {
-                ctx.lineTo(p.x, p.y);
-            }
-        }
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = "rgba(0,0,0,0.65)";
-        ctx.stroke();
-
-        // Colored foreground stroke
-        ctx.beginPath();
-        for (let i = 0; i < points.length; i++) {
-            const p = points[i];
-            if (i === 0) {
-                ctx.moveTo(p.x, p.y);
-            } else {
-                ctx.lineTo(p.x, p.y);
-            }
-        }
-        ctx.lineWidth = 3.2;
-        ctx.lineCap = "round";
-        ctx.strokeStyle = color;
-        ctx.stroke();
-    }
-
-    for (const s of this.completedStageSpheres) {
-        // If this flag is not set, default to already spawned (for old saves)
-        const spawned = (s.spawned === undefined) ? true : s.spawned;
-        if (!spawned) {
-            // Newly completed stage trophy waits until shrink finishes.
+        const loopCount = LOOPS[stageIndex] || 0;
+        if (loopCount <= 0) {
+            ctx.restore();
             continue;
         }
 
-        const angle = s.angle ?? 0;
-        const sx = cxBase + Math.cos(angle) * orbitRadius;
-        const sy = cySphereBase + Math.sin(angle) * orbitRadius;
-
-        ctx.save();
-
-        // Always render completed trophies at 0.6 opacity
-        ctx.globalAlpha *= 0.6;
-
-        // Base gradient sphere
-        this.drawSphereBackground(ctx, sx, sy, smallRadius, 1.0);
-
-        // Per-sphere phase so they are desynced
-        const stageIndex = s.stage ?? 0;
-        const basePhase = stageIndex * 0.7;
-
-        // Rotation is on by default unless explicitly disabled
-        const rotationOn = spinActive && (s.rotationEnabled !== false);
-
-        // Static "base" pose (this is what we want at t = 0)
-        const baseYaw = 0;
-        const basePitch = 0.5;
-        const baseRoll = 0;
-
-        let yaw = baseYaw;
-        let pitch = basePitch;
-        let roll = baseRoll;
-
-        // Local per-sphere timer: starts at 0 and only advances while rotating.
-        if (typeof s.spinT !== "number") {
-            s.spinT = 0;
-        }
-
-        // Advance timer first so the very first rotating frame already
-        // has a tiny movement away from the pure base pose.
-        s.spinT += dt;
-        const tLocal = s.spinT;
-
-        // Small animated offsets around the base pose, desynced per stage
-        yaw = baseYaw + tLocal * 0.35;
-        pitch = basePitch + Math.sin(tLocal * 0.27 * ((basePhase + 1) / 2)) * 0.4;
-        roll = baseRoll + Math.sin(tLocal * 0.19 * ((basePhase) + 1 / 2) * 1.3) * 0.4;
-
-        // Latitude rings: same count and thickness as main sphere
-        for (let slot = 0; slot < LOOPS[stageIndex]; slot++) {
-            const tSlot = LOOPS[stageIndex] === 1 ? 0.5 : slot / (LOOPS[stageIndex] - 1);
+        for (let slot = 0; slot < loopCount; slot++) {
+            const tSlot = loopCount === 1 ? 0.5 : slot / (loopCount - 1);
             const lat = (0.5 - tSlot) * 2 * maxLat;
+
             if (lat <= -Math.PI / 2 || lat >= Math.PI / 2) {
                 continue;
             }
 
+            const sinLat = Math.sin(lat);
+            const cosLat = Math.cos(lat);
+
+            const rLat = smallRadius * cosLat;
+            const yLat = smallRadius * sinLat;
+
             const col = this.ringColor(slot, stageIndex);
-            drawRing3D(sx, sy, smallRadius, lat, yaw, pitch, roll, col);
+
+            // Draw one ring using precomputed circle angles
+            ctx.beginPath();
+            let first = true;
+
+            for (let i = 0; i < TROPHY_ANGLES.length; i++) {
+                const a = TROPHY_ANGLES[i];
+
+                const x = rLat * a.cos;
+                const y = yLat;
+                const z = rLat * a.sin;
+
+                const p = rotatePoint(x, y, z);
+                if (first) {
+                    ctx.moveTo(p.x, p.y);
+                    first = false;
+                } else {
+                    ctx.lineTo(p.x, p.y);
+                }
+            }
+
+            // Background stroke
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = "rgba(0,0,0,0.65)";
+            ctx.stroke();
+
+            // Colored foreground stroke
+            ctx.beginPath();
+            first = true;
+            for (let i = 0; i < TROPHY_ANGLES.length; i++) {
+                const a = TROPHY_ANGLES[i];
+
+                const x = rLat * a.cos;
+                const y = yLat;
+                const z = rLat * a.sin;
+
+                const p = rotatePoint(x, y, z);
+                if (first) {
+                    ctx.moveTo(p.x, p.y);
+                    first = false;
+                } else {
+                    ctx.lineTo(p.x, p.y);
+                }
+            }
+            ctx.lineWidth = 3.2;
+            ctx.lineCap = "round";
+            ctx.strokeStyle = col;
+            ctx.stroke();
         }
 
         ctx.restore();
@@ -745,24 +854,14 @@ CirclesGame.prototype.drawStagesModal = function (ctx, w, h) {
     const drawCard = (idx, cardX, cardY, cardW, cardH) => {
         const isComplete = !!completedFlags[idx];
         const isActive = this.activeStageIndex === idx;
-
         const canResume = isActive && !isComplete && !this.requireStageChange;
 
         let locked = false;
+        if (isComplete) locked = true;
+        if (idx === lastIndex && !allBeforeLastComplete) locked = true;
+        if (this.requireStageChange && isActive) locked = true;
 
-        if (isComplete) {
-            locked = true;
-        }
-
-        if (idx === lastIndex && !allBeforeLastComplete) {
-            locked = true;
-        }
-
-        if (this.requireStageChange && isActive) {
-            locked = true;
-        }
-
-        // Brief challenge description
+        // Stage description (wrapped)
         const desc = (typeof this.getStageDescription === "function")
             ? this.getStageDescription(idx)
             : (idx === lastIndex ? "Final challenge." : "Stage challenge.");
@@ -773,36 +872,36 @@ CirclesGame.prototype.drawStagesModal = function (ctx, w, h) {
             pts = this.getStagePointsForStage(idx) || 0;
         }
 
-        // Second line: status + points
-        let pointsLine = "";
+        // ==== NEW RULE ====
+        // Line A: points ONLY
+        // Line B: status ONLY (complete / locked / resume)
+        let lineA = pts > 0 ? `+${pts} pts` : "";
+        let lineB = "";
+
         if (isComplete) {
-            pointsLine = pts > 0 ? `✓ complete  ·  +${pts} pts` : "✓ complete";
+            lineB = "complete";
         } else if (idx === lastIndex && !allBeforeLastComplete) {
-            pointsLine = pts > 0 ? `locked  ·  +${pts} pts` : "locked";
+            lineB = "locked";
         } else if (canResume) {
-            pointsLine = pts > 0 ? `resume  ·  +${pts} pts` : "resume";
-        } else if (pts > 0) {
-            pointsLine = `+${pts} pts`;
+            lineB = "resume";
+        } else if (locked) {
+            lineB = "locked";
         }
 
-        let fillStyle;
-        let strokeStyle;
-        let titleColor = "#f6f6ff";
-        let descColor = "#d0d0ff";
-        let pointsColor = "#d0d0ff";
-
+        // Coloring rules
+        let fillStyle, strokeStyle, titleColor = "#f6f6ff", descColor = "#d0d0ff", bottomColor = "#d0d0ff";
         if (canResume) {
             fillStyle = "rgba(10, 40, 20, 0.98)";
             strokeStyle = "rgba(140, 255, 180, 0.98)";
             titleColor = "#c8ffc8";
             descColor = "#9cffb0";
-            pointsColor = "#9cffb0";
+            bottomColor = "#9cffb0";
         } else if (isComplete) {
             fillStyle = "rgba(60,60,60,0.6)";
             strokeStyle = "rgba(150,150,150,0.6)";
             titleColor = "#b0b0b0";
             descColor = "#c0c0c0";
-            pointsColor = "#c0c0c0";
+            bottomColor = "#c0c0c0";
         } else if (locked) {
             fillStyle = "rgba(10,10,20,0.7)";
             strokeStyle = "rgba(120,140,170,0.8)";
@@ -814,11 +913,11 @@ CirclesGame.prototype.drawStagesModal = function (ctx, w, h) {
             strokeStyle = "rgba(200,230,255,0.9)";
         }
 
+        // Draw background
         ctx.beginPath();
         ctx.rect(cardX, cardY, cardW, cardH);
         ctx.fillStyle = fillStyle;
         ctx.fill();
-
         ctx.lineWidth = isActive && !isComplete ? 2 : 1;
         ctx.strokeStyle = strokeStyle;
         ctx.stroke();
@@ -826,23 +925,58 @@ CirclesGame.prototype.drawStagesModal = function (ctx, w, h) {
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
 
-        // Title: "Stage N"
+        // Title
         ctx.font = "28px 'Blockletter'";
         ctx.fillStyle = titleColor;
-        ctx.fillText("Stage " + (idx + 1), cardX + cardW / 2, cardY + cardH * 0.28);
+        ctx.fillText("Stage " + (idx + 1), cardX + cardW / 2, cardY + cardH * 0.20);
 
-        // Middle line: brief description
+        // ==== WRAPPED DESCRIPTION ====
         ctx.font = "16px 'Blockletter'";
         ctx.fillStyle = descColor;
-        ctx.fillText(desc, cardX + cardW / 2, cardY + cardH * 0.50);
 
-        // Bottom line: points (and status if any)
-        if (pointsLine) {
-            ctx.font = "18px 'Blockletter'";
-            ctx.fillStyle = pointsColor;
-            ctx.fillText(pointsLine, cardX + cardW / 2, cardY + cardH * 0.72);
+        function wrapText(text, maxWidth) {
+            const words = text.split(" ");
+            const lines = [];
+            let cur = "";
+
+            for (let w of words) {
+                const test = cur.length ? cur + " " + w : w;
+                if (ctx.measureText(test).width > maxWidth) {
+                    lines.push(cur);
+                    cur = w;
+                } else {
+                    cur = test;
+                }
+            }
+            if (cur.length) lines.push(cur);
+            return lines;
         }
 
+        const descLines = wrapText(desc, cardW * 0.80);
+        const descStartY = cardY + cardH * 0.40;
+
+        for (let i = 0; i < descLines.length; i++) {
+            ctx.fillText(descLines[i], cardX + cardW / 2, descStartY + i * 18);
+        }
+
+        // ==== BOTTOM TEXT ====
+        const baseY = cardY + cardH * 0.72;
+
+        // Line A: points
+        if (lineA) {
+            ctx.font = "18px 'Blockletter'";
+            ctx.fillStyle = bottomColor;
+            ctx.fillText(lineA, cardX + cardW / 2, baseY);
+        }
+
+        // Line B: status
+        if (lineB) {
+            ctx.font = "16px 'Blockletter'";
+            ctx.fillStyle = bottomColor;
+            ctx.fillText(lineB, cardX + cardW / 2, baseY + 20);
+        }
+
+        // Add clickable bounds
         if (!locked && allowClicks) {
             this.stageRowBounds.push({
                 x: cardX,
@@ -1183,7 +1317,7 @@ CirclesGame.prototype.getStageDescription = function (idx) {
         case 5: return "No loop multiplier";
         case 6: return "Threshold starts at 100";
         case 7: return "No upgrades";
-        case 8: return "";
+        case 8: return "100 loops at threshold 50";
         default: return "Stage challenge.";
     }
 };

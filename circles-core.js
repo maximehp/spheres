@@ -119,6 +119,11 @@ class CirclesGame {
         this.pendingStageSphereStage = null;
         this.requireStageChange = false;
 
+        this.trophyOrbitAngle = 0;
+
+        // Total playtime for the current run (seconds)
+        this.totalPlayTime = 0;
+
         // Win animation state (full game win, separate from run-complete)
         this.winState = {
             active: false,
@@ -126,11 +131,20 @@ class CirclesGame {
             duration: 4.0
         };
 
+        this.winClickDelay = 3;
+
+        this.winPulses = [];            // [{ t }]
+
         // Track the highest ring digit to detect its wrap
         this.lastTopDigit = null;
 
         // Global speed scale (ArrowUp / ArrowDown)
         this.speedScale = 1.0;
+
+        // FPS tracking
+        this.showFps = false;
+        this.fps = 0;
+        this.fpsSmoothing = 0.999; // closer to 1 means more smoothing
 
         this.devUnlocked = false;
 
@@ -196,6 +210,12 @@ CirclesGame.prototype.resetAll = function () {
     this.winState.active = false;
     this.winState.timer = 0;
     this.lastTopDigit = null;
+    this.winPulses = [];
+
+    this.trophyOrbitAngle = 0;
+
+    // Reset playtime for a fresh run
+    this.totalPlayTime = 0;
 
     // Run-complete animation state
     this.runCompleteAnim.active = false;
@@ -299,6 +319,10 @@ CirclesGame.prototype.startRunCompleteAnim = function () {
 CirclesGame.prototype.startWinAnimation = function () {
     this.winState.active = true;
     this.winState.timer = 0;
+
+    // Reset win pulses for this win sequence
+    this.winPulses = [];
+    this._winSpawnAccumulator = 0;
 };
 
 CirclesGame.prototype.markGameCompleted = function () {
@@ -511,6 +535,17 @@ CirclesGame.prototype.loop = function (t) {
     this.lastTime = t;
     this.lastDt = dt;
 
+    // FPS tracking: smoothed instantaneous FPS
+    if (dt > 0) {
+        const instantFps = 1 / dt;
+        if (this.fps === 0) {
+            this.fps = instantFps;
+        } else {
+            const a = this.fpsSmoothing != null ? this.fpsSmoothing : 0.9;
+            this.fps = this.fps * a + instantFps * (1 - a);
+        }
+    }
+
     this.update(dt);
     this.draw();
     this.updateInfo();
@@ -519,18 +554,46 @@ CirclesGame.prototype.loop = function (t) {
 };
 
 CirclesGame.prototype.update = function (dt) {
-    // Always tick the delayed stages-modal timer
-    this.updateStageModalTimer(dt);
+    // Track total playtime only while not in the win screen
+    if (!this.winState.active) {
+        this.totalPlayTime = (this.totalPlayTime || 0) + dt;
+    }
 
-    // Full win animation: freeze logic while playing
+    // If the win animation is playing, freeze core game logic
+    // but keep the win timer and pulse system advancing.
     if (this.winState.active) {
         this.winState.timer += dt;
-        if (this.winState.timer >= this.winState.duration) {
-            this.winState.active = false;
-            this.resetAll();
+
+        const spawnDuration = this.winState.duration || 3.0;  // time window to spawn new pulses
+        const pulseLifetime = 20;                            // seconds each pulse lives
+        const spawnInterval = (this.winState.timer + 0.1) / 3;                           // seconds between pulse spawns
+
+        // Spawn new pulses only while within the spawn window
+        if (this.winState.timer <= spawnDuration) {
+            this._winSpawnAccumulator += dt;
+            while (this._winSpawnAccumulator >= spawnInterval) {
+                this._winSpawnAccumulator -= spawnInterval;
+
+                // One logical pulse per spawn; we will draw it as a pair
+                this.winPulses.push({ t: 0 });
+            }
         }
+
+        // Advance existing pulses and drop the ones that are done
+        for (let i = this.winPulses.length - 1; i >= 0; i--) {
+            const pulse = this.winPulses[i];
+            pulse.t += dt;
+            if (pulse.t > pulseLifetime) {
+                this.winPulses.splice(i, 1);
+            }
+        }
+
+        // No other game logic while win screen is active
         return;
     }
+
+    // Normal game logic only when not in win animation
+    this.updateStageModalTimer(dt);
 
     const flash = this.runCompleteFlash;
     const shrink = this.runCompleteAnim;
@@ -660,10 +723,10 @@ CirclesGame.prototype.update = function (dt) {
 
             let term = this.multScale * (effectiveProgress + 1);
 
-            // Stage 1: higher rings contribute less (10% per ring level)
+            // Stage 1: higher rings contribute less (7% per ring level)
             if (hasHighRingPenalty) {
                 const ringLevel = ring.level != null ? ring.level : i;
-                const penalty = Math.max(0.1, 1 - 0.1 * ringLevel);
+                const penalty = Math.max(0.07, 1 - 0.07 * ringLevel);
                 term *= penalty;
             }
 
@@ -695,6 +758,39 @@ CirclesGame.prototype.update = function (dt) {
     this.rebuildFromTotal();
 
     const stageSlots = this.getStageLoopSlots(this.activeStageIndex);
+    const finalIndex = (this.stageCount || 9) - 1;
+    const isFinalStage = (stageIdx === finalIndex);
+
+    // On the final stage, completed trophies orbit the center.
+    // Orbit speed scales with how many slots (rings) are currently filled.
+    if (isFinalStage &&
+        this.completedStageSpheres &&
+        this.completedStageSpheres.length > 0 &&
+        stageSlots > 0) {
+
+        let usedSlots = 0;
+        for (let i = 0; i < this.rings.length && usedSlots < stageSlots; i++) {
+            if (this.rings[i].exists()) {
+                usedSlots++;
+            }
+        }
+
+        const fillRatio = usedSlots / stageSlots;  // 0..1 as you add rings
+        const maxOrbitSpeed = Math.PI * 0.6;       // radians/sec at full slots
+
+        const speed = maxOrbitSpeed * fillRatio;
+
+        if (!this.trophyOrbitAngle) {
+            this.trophyOrbitAngle = 0;
+        }
+
+        this.trophyOrbitAngle += speed * dt;
+
+        const twoPi = Math.PI * 2;
+        if (this.trophyOrbitAngle >= twoPi || this.trophyOrbitAngle <= -twoPi) {
+            this.trophyOrbitAngle %= twoPi;
+        }
+    }
 
     // Run completion detection based on the Nth ring completing a loop.
     if (this.rings.length >= stageSlots) {
@@ -713,16 +809,25 @@ CirclesGame.prototype.update = function (dt) {
                 this.handleStageCompletion();
             }
 
-            // Prefer a run-complete handler if present (meta layer),
-            // otherwise fall back to the old "final win" behavior.
-            if (typeof this.onRunComplete === "function") {
-                this.onRunComplete();
-            } else {
+            if (isFinalStage) {
+                // Final stage: skip run-complete animation, trigger full win immediately
                 this.markGameCompleted();
                 if (typeof this.onWin === "function") {
                     this.onWin();
                 } else {
                     this.startWinAnimation();
+                }
+            } else {
+                // Non-final stages: use the run-complete animation if provided
+                if (typeof this.onRunComplete === "function") {
+                    this.onRunComplete();
+                } else {
+                    this.markGameCompleted();
+                    if (typeof this.onWin === "function") {
+                        this.onWin();
+                    } else {
+                        this.startWinAnimation();
+                    }
                 }
             }
         }
@@ -740,6 +845,17 @@ CirclesGame.prototype.handleClick = function (event) {
     const rect = this.canvas.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
+
+    // If the win screen is showing, only allow reset after a delay
+    if (this.winState && this.winState.active) {
+        const delay = this.winClickDelay || 0;
+        if (this.winState.timer >= delay) {
+            this.winState.active = false;
+            this.resetAll();
+        }
+        // Swallow all clicks while the win screen is visible
+        return;
+    }
 
     //////////////////////////////////////////////////////
     // 1) Modal open: handle clicks inside modal only
@@ -1035,6 +1151,13 @@ CirclesGame.prototype.handleKey = function (e) {
         return;
     }
 
+    // Toggle FPS counter with "-" regardless of devUnlocked
+    if (e.key === "-" || e.code === "Minus") {
+        this.showFps = !this.showFps;
+        e.preventDefault();
+        return;
+    }
+
     // Dev tools only available once the player has beaten the game at least once.
     if (!this.devUnlocked) {
         return;
@@ -1043,9 +1166,11 @@ CirclesGame.prototype.handleKey = function (e) {
     if (e.key === "ArrowUp") {
         // Double base speed
         this.speedScale *= 2;
+
     } else if (e.key === "ArrowDown") {
         // Half base speed
         this.speedScale /= 2;
+
     } else if (e.key === "Enter") {
         // Trigger an instant win
         if (!this.winState.active) {
@@ -1054,6 +1179,18 @@ CirclesGame.prototype.handleKey = function (e) {
             } else {
                 this.startWinAnimation();
             }
+        }
+
+    } else if (e.key >= "1" && e.key <= "9") {
+        // Number keys 1–9 select stages 1–9 (indices 0–8)
+        const stageNumber = parseInt(e.key, 10);   // "1" -> 1, "9" -> 9
+        const targetIndex = stageNumber - 1;       // 0-based index
+        const count = this.stageCount || 9;
+
+        if (targetIndex >= 0 &&
+            targetIndex < count &&
+            typeof this.startStage === "function") {
+            this.startStage(targetIndex);
         }
     }
 };
