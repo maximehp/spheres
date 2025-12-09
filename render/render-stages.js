@@ -101,11 +101,25 @@ CirclesGame.prototype.renderStagesList = function () {
         let label = "Stage " + (i + 1);
         let status = isComplete ? "✓ complete" : "not completed";
 
-        // Final stage is locked until all earlier stages are complete
         let locked = false;
+
+        // Once a stage is completed, it is locked forever
+        if (isComplete) {
+            locked = true;
+            status = "completed (locked)";
+        }
+
+        // Final stage requires all earlier stages completed
         if (isFinalStage && !allBeforeLastComplete) {
             locked = true;
             status = "locked (complete all previous stages)";
+        }
+
+        // After a completion, you must pick a different stage;
+        // the just-completed stage cannot be chosen again.
+        if (this.requireStageChange && isActive) {
+            locked = true;
+            status = "choose another stage to continue";
         }
 
         btn.textContent = label + "  -  " + status;
@@ -130,6 +144,11 @@ CirclesGame.prototype.showStagesModal = function () {
 };
 
 CirclesGame.prototype.hideStagesModal = function () {
+    // If a stage has just been completed, you must choose a different stage
+    // before you are allowed to close the modal.
+    if (this.requireStageChange) {
+        return;
+    }
     this.stagesModalVisible = false;
 };
 
@@ -139,6 +158,18 @@ CirclesGame.prototype.hideStagesModal = function () {
 CirclesGame.prototype.startStage = function (stageIndex) {
     const count = this.stageCount || 9;
     if (stageIndex < 0 || stageIndex >= count) {
+        return;
+    }
+
+    // Do not allow starting a stage that is already completed
+    if (this.stageCompleted && this.stageCompleted[stageIndex]) {
+        return;
+    }
+
+    const prevIndex = this.activeStageIndex;
+
+    // If we are in the "must change stage" state, you cannot pick the same stage again
+    if (this.requireStageChange && stageIndex === prevIndex) {
         return;
     }
 
@@ -175,6 +206,18 @@ CirclesGame.prototype.startStage = function (stageIndex) {
     this.lastTopDigit = null;
     this.speedScale = 1.0;
 
+    // Once a new stage starts, all spawned trophies are allowed to rotate
+    if (this.completedStageSpheres) {
+        for (const s of this.completedStageSpheres) {
+            if (s.spawned === undefined || s.spawned) {
+                s.rotationEnabled = true;
+            }
+        }
+    }
+
+    this.pendingStageSphereStage = null;
+    this.requireStageChange = false;
+
     // Stage specific handicaps or modifiers go here.
     // Example placeholder layout:
     //
@@ -199,20 +242,29 @@ CirclesGame.prototype.startStage = function (stageIndex) {
     this.updateStagesToggleVisibility();
 };
 
-CirclesGame.prototype.drawCompletedStageSpheres = function (ctx, cxBase, cySphereBase, sphereRadiusBase) {
+CirclesGame.prototype.drawCompletedStageSpheres = function (ctx, cxBase, cySphereBase, sphereRadiusBase, spinActive) {
     if (!this.completedStageSpheres || this.completedStageSpheres.length === 0) {
         return;
     }
 
+    if (spinActive === undefined) {
+        spinActive = true;
+    }
+
+    const dt = this.lastDt || 0.016; // per-frame time step
+
     const orbitRadius = sphereRadiusBase * STAGE_ORBIT_RADIUS_FACTOR;
-    const smallRadius = sphereRadiusBase * STAGE_SPHERE_RADIUS_FACTOR;
+
+    // Slightly larger than the shrink target so the fake sphere
+    // visually matches the parked "real" sphere.
+    const TROPHY_RADIUS_SCALE = STAGE_SPHERE_RADIUS_FACTOR * 1.2;
+    const smallRadius = sphereRadiusBase * TROPHY_RADIUS_SCALE;
 
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.font = "12px 'Blockletter'";
 
     const maxLat = Math.PI * 0.45;
-    const t = performance.now() * 0.001;   // global time in seconds
     const STEPS = 64;
 
     // Helper: draw one 3D-rotated ring as a polyline
@@ -254,7 +306,6 @@ CirclesGame.prototype.drawCompletedStageSpheres = function (ctx, cxBase, cySpher
             // Roll (around Z axis)
             let x3 = cosRoll * x2 - sinRoll * y2;
             let y3 = sinRoll * x2 + cosRoll * y2;
-            // z3 = z2; // ignored in orthographic projection
 
             points.push({
                 x: cx + x3,
@@ -262,7 +313,7 @@ CirclesGame.prototype.drawCompletedStageSpheres = function (ctx, cxBase, cySpher
             });
         }
 
-        // Background stroke (same line width as main sphere)
+        // Background stroke
         ctx.beginPath();
         for (let i = 0; i < points.length; i++) {
             const p = points[i];
@@ -293,22 +344,62 @@ CirclesGame.prototype.drawCompletedStageSpheres = function (ctx, cxBase, cySpher
     }
 
     for (const s of this.completedStageSpheres) {
+        // If this flag is not set, default to already spawned (for old saves)
+        const spawned = (s.spawned === undefined) ? true : s.spawned;
+        if (!spawned) {
+            // Newly completed stage trophy waits until shrink finishes.
+            continue;
+        }
+
         const angle = s.angle ?? 0;
         const sx = cxBase + Math.cos(angle) * orbitRadius;
         const sy = cySphereBase + Math.sin(angle) * orbitRadius;
 
         ctx.save();
 
-        // Base gradient sphere (same as main)
+        // Base gradient sphere
         this.drawSphereBackground(ctx, sx, sy, smallRadius, 1.0);
 
-        // Gentle spin parameters per sphere (offset by stage index so they are de-synced)
+        // Per-sphere phase so they are desynced
         const stageIndex = s.stage ?? 0;
         const basePhase = stageIndex * 0.7;
 
-        const yaw   = t * 0.35 + basePhase;                             // slow constant spin
-        const pitch = Math.sin(t * 0.27 + basePhase) * 0.55;            // rocking up/down
-        const roll  = Math.sin(t * 0.19 + basePhase * 1.3) * 0.55;      // twist around view axis
+        // Rotation is on by default unless explicitly disabled
+        const rotationOn = spinActive && (s.rotationEnabled !== false);
+
+        // Static "base" pose (this is what we want at t = 0)
+        const baseYaw = 0;
+        const basePitch = 0.5;
+        const baseRoll = 0;
+
+        let yaw = baseYaw;
+        let pitch = basePitch;
+        let roll = baseRoll;
+
+        if (rotationOn) {
+            // Local per-sphere timer: starts at 0 and only advances while rotating.
+            if (typeof s.spinT !== "number") {
+                s.spinT = 0;
+            }
+
+            // Use the previous value of spinT to compute orientation,
+            // so the first rotating frame is exactly the base pose.
+            const tLocal = s.spinT;
+
+            // Advance timer for next frame
+            s.spinT += dt;
+
+            // Small animated offsets around the base pose, desynced per stage
+            yaw = baseYaw + tLocal * 0.35;
+
+            pitch = basePitch + Math.sin(tLocal * 0.27 + basePhase) * 0.4;
+
+            roll = baseRoll + Math.sin(tLocal * 0.19 + basePhase * 1.3) * 0.4;
+        } else {
+            // If rotation is off, keep the timer reset so it starts from
+            // the base pose next time it is enabled.
+            s.spinT = 0;
+        }
 
         // Latitude rings: same count and thickness as main sphere
         for (let slot = 0; slot < MAX_SLOTS; slot++) {
@@ -400,22 +491,24 @@ CirclesGame.prototype.drawStagesModal = function (ctx, w, h) {
     ctx.fillStyle = "white";
     ctx.fillText("STAGES", x + modalW / 2, y + 20);
 
-    // Close button
+    // Close button (only active if we are not forced to change stage)
     const closeSize = 32;
-    const cx = x + modalW - closeSize - 12;
-    const cy = y + 12;
-    this.stageModalCloseBounds = { x: cx, y: cy, w: closeSize, h: closeSize };
+    const cxClose = x + modalW - closeSize - 12;
+    const cyClose = y + 12;
+    this.stageModalCloseBounds = { x: cxClose, y: cyClose, w: closeSize, h: closeSize };
 
     ctx.beginPath();
-    ctx.roundRect(cx, cy, closeSize, closeSize, 8);
-    ctx.fillStyle = "rgba(255,60,60,0.8)";
+    ctx.roundRect(cxClose, cyClose, closeSize, closeSize, 8);
+    ctx.fillStyle = this.requireStageChange
+        ? "rgba(120,120,120,0.6)"
+        : "rgba(255,60,60,0.8)";
     ctx.fill();
 
     ctx.font = "26px Blockletter";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillStyle = "black";
-    ctx.fillText("X", cx + closeSize / 2, cy + closeSize / 2);
+    ctx.fillText("X", cxClose + closeSize / 2, cyClose + closeSize / 2);
 
     // Stage rows
     const rowH = 48;
@@ -423,15 +516,43 @@ CirclesGame.prototype.drawStagesModal = function (ctx, w, h) {
 
     this.stageRowBounds = [];
 
-    for (let i = 0; i < this.stageCount; i++) {
+    const count = this.stageCount || 9;
+    const completedFlags = this.stageCompleted || new Array(count).fill(false);
+    const lastIndex = count - 1;
+    const allBeforeLastComplete = completedFlags
+        .slice(0, lastIndex)
+        .every(Boolean);
+
+    for (let i = 0; i < count; i++) {
         const ry = startY + i * (rowH + 8);
 
         if (ry + rowH > y + modalH - 20) break;
 
-        const isComplete = !!this.stageCompleted[i];
+        const isComplete = !!completedFlags[i];
         const isActive = this.activeStageIndex === i;
-        const isFinal = i === this.stageCount - 1;
-        const locked = isFinal && !this.stageCompleted.slice(0, i).every(Boolean);
+        const isFinal = i === count - 1;
+
+        let locked = false;
+        let status;
+
+        if (isComplete) {
+            locked = true;
+            status = "Completed (locked)";
+        } else {
+            status = "Not Completed";
+        }
+
+        // Final stage requires all previous stages completed
+        if (isFinal && !allBeforeLastComplete) {
+            locked = true;
+            status = "Locked (complete all previous stages)";
+        }
+
+        // After a completion, you must choose a different stage
+        if (this.requireStageChange && isActive) {
+            locked = true;
+            status = "Choose another stage to continue";
+        }
 
         // Background
         ctx.beginPath();
@@ -450,12 +571,6 @@ CirclesGame.prototype.drawStagesModal = function (ctx, w, h) {
         ctx.textBaseline = "middle";
         ctx.font = "20px Blockletter";
         ctx.fillStyle = "white";
-
-        let status = locked
-            ? "Locked"
-            : isComplete
-            ? "Completed"
-            : "Not Completed";
 
         ctx.fillText(`Stage ${i + 1} — ${status}`, x + 30, ry + rowH / 2);
 

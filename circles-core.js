@@ -104,6 +104,9 @@ class CirclesGame {
             startedShrink: false // new flag so we only trigger shrink once
         };
 
+        this.pendingStageSphereStage = null;
+        this.requireStageChange = false;
+
         // Win animation state (full game win, separate from run-complete)
         this.winState = {
             active: false,
@@ -196,6 +199,10 @@ CirclesGame.prototype.resetAll = function () {
     this.stageCompleted = new Array(this.stageCount).fill(false);
     this.activeStageIndex = 0;
     this.completedStageSpheres = [];
+
+    // New flags related to stage trophies
+    this.pendingStageSphereStage = null;
+    this.requireStageChange = false;
 
     // Hide stages modal and clear click targets
     this.stagesModalVisible = false;
@@ -343,9 +350,12 @@ CirclesGame.prototype.handleStageCompletion = function () {
     }
 
     const wasCompleted = !!this.stageCompleted[idx];
-    if (!wasCompleted) {
-        this.stageCompleted[idx] = true;
+    // Stages are only completable once
+    if (wasCompleted) {
+        return;
     }
+
+    this.stageCompleted[idx] = true;
 
     // Stable orbit angle for this stage
     const angle = this.getStageAngle(idx);
@@ -362,19 +372,32 @@ CirclesGame.prototype.handleStageCompletion = function () {
         this.completedStageSpheres = [];
     }
 
-    const existing = this.completedStageSpheres.find(s => s.stage === idx);
-    if (existing) {
-        existing.angle = angle;
-        existing.color = color;
-        existing.loops = loopsAtCompletion;
+    let sphere = this.completedStageSpheres.find(s => s.stage === idx);
+    if (sphere) {
+        sphere.angle = angle;
+        sphere.color = color;
+        sphere.loops = loopsAtCompletion;
+        sphere.spawned = false;
+        sphere.rotationEnabled = false;
     } else {
-        this.completedStageSpheres.push({
+        sphere = {
             stage: idx,
             angle: angle,
             color: color,
-            loops: loopsAtCompletion
-        });
+            loops: loopsAtCompletion,
+            // The trophy will not be drawn until shrink finishes
+            spawned: false,
+            // Rotation will only start after we move on to a new stage
+            rotationEnabled: false
+        };
+        this.completedStageSpheres.push(sphere);
     }
+
+    // Let update() know which stage’s trophy to “spawn” when shrink is done
+    this.pendingStageSphereStage = idx;
+
+    // After a completion, you must pick a different stage before resuming
+    this.requireStageChange = true;
 
     this.saveLocal();
 
@@ -383,7 +406,7 @@ CirclesGame.prototype.handleStageCompletion = function () {
     }
 
     const isFirstStage = idx === 0;
-    if (isFirstStage && !wasCompleted) {
+    if (isFirstStage) {
         if (!this.stageModalTimer) {
             this.stageModalTimer = { active: false, t: 0, delay: 3.0 };
         }
@@ -477,6 +500,17 @@ CirclesGame.prototype.update = function (dt) {
                 shrink.t = shrink.duration;
                 shrink.active = false;
                 this.completedSphereStatic = true;
+
+                // Shrink just finished: now the trophy for this stage is allowed to appear
+                if (this.pendingStageSphereStage != null && this.completedStageSpheres) {
+                    const stageIdx = this.pendingStageSphereStage;
+                    const sphere = this.completedStageSpheres.find(s => s.stage === stageIdx);
+                    if (sphere) {
+                        sphere.spawned = true;          // now it can be drawn
+                        // rotationEnabled stays false until we start a new stage
+                    }
+                    this.pendingStageSphereStage = null;
+                }
             }
         }
 
@@ -496,6 +530,16 @@ CirclesGame.prototype.update = function (dt) {
             shrink.t = shrink.duration;
             shrink.active = false;
             this.completedSphereStatic = true;
+
+            // Same: if shrink finishes outside the flash block
+            if (this.pendingStageSphereStage != null && this.completedStageSpheres) {
+                const stageIdx = this.pendingStageSphereStage;
+                const sphere = this.completedStageSpheres.find(s => s.stage === stageIdx);
+                if (sphere) {
+                    sphere.spawned = true;
+                }
+                this.pendingStageSphereStage = null;
+            }
         }
         // Still in end-of-run animation, no game logic
         return;
@@ -694,7 +738,9 @@ CirclesGame.prototype.serializeState = function () {
             stage: s.stage,
             angle: s.angle,
             color: s.color,
-            loops: s.loops
+            loops: s.loops,
+            spawned: s.spawned === undefined ? true : s.spawned,
+            rotationEnabled: s.rotationEnabled === undefined ? true : s.rotationEnabled
         }))
     };
 };
@@ -728,7 +774,10 @@ CirclesGame.prototype.applyState = function (s) {
             stage: o.stage,
             angle: o.angle,
             color: o.color,
-            loops: o.loops
+            loops: o.loops,
+            // Old saves will have these missing; default to "already spawned and spinning"
+            spawned: o.spawned === undefined ? true : o.spawned,
+            rotationEnabled: o.rotationEnabled === undefined ? true : o.rotationEnabled
         }));
     } else {
         this.completedStageSpheres = [];
@@ -749,6 +798,10 @@ CirclesGame.prototype.applyState = function (s) {
     }
 
     this.rebuildFromTotal();
+
+    // Reset transient flags
+    this.pendingStageSphereStage = null;
+    this.requireStageChange = false;
 
     if (typeof this.updateStagesToggleVisibility === "function") {
         this.updateStagesToggleVisibility();

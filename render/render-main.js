@@ -126,6 +126,12 @@ CirclesGame.prototype.draw = function () {
     const flashActive = this.runCompleteFlash && this.runCompleteFlash.active;
     const runAnimOrStatic = runAnimActive || this.completedSphereStatic || flashActive;
 
+    // Show the main sphere during play, flash and shrink.
+    // Once the shrink has completed and the sphere is parked,
+    // hide it so only the orbit trophy remains.
+    const showMainSphere =
+        !this.completedSphereStatic || runAnimActive || flashActive;
+
     if (this.runCompleteAnim && (this.runCompleteAnim.active || this.runCompleteAnim.t > 0)) {
         const anim = this.runCompleteAnim;
         const fRaw = anim.duration > 0 ? anim.t / anim.duration : 1;
@@ -165,18 +171,17 @@ CirclesGame.prototype.draw = function () {
         ? (usedSlots / MAX_SLOTS)
         : 0.0;
 
-    this.drawSphereBackground(ctx, cxSphere, cySphere, sphereRadius, opacityFactor);
+    if (showMainSphere) {
+        this.drawSphereBackground(ctx, cxSphere, cySphere, sphereRadius, opacityFactor);
+    }
 
-    if (usedSlots === 0) {
+    if (showMainSphere && usedSlots === 0) {
         // Win overlay can still run, but there is nothing to draw for rings.
         if (this.winState && this.winState.active) {
             // fall through to overlay
         } else {
             // Draw upgrade buttons anyway, anchored to base sphere
             this.drawUpgradeButtons(ctx, cxBase, cySphereBase, sphereRadiusBase);
-            // Flash / win overlay can still draw over this if active.
-            // But no rings to render, so we can safely skip the ring loop.
-            // (Do not return early if you want flash or win overlay to show.)
         }
     }
 
@@ -202,111 +207,115 @@ CirclesGame.prototype.draw = function () {
 
     const winActive = this.winState && this.winState.active;
 
-    for (let slot = 0; slot < usedSlots; slot++) {
-        const ringIndex = visibleIndices[slot];
-        const ring = this.rings[ringIndex];
+    if (showMainSphere) {
+        for (let slot = 0; slot < usedSlots; slot++) {
+            const ringIndex = visibleIndices[slot];
+            const ring = this.rings[ringIndex];
 
-        // t = slot position in [0, MAX_SLOTS-1]
-        const t = MAX_SLOTS === 1 ? 0.5 : slot / (MAX_SLOTS - 1);
-        const lat = (0.5 - t) * 2 * maxLat;
+            // t = slot position in [0, MAX_SLOTS-1]
+            const t = MAX_SLOTS === 1 ? 0.5 : slot / (MAX_SLOTS - 1);
+            const lat = (0.5 - t) * 2 * maxLat;
 
-        if (lat <= -Math.PI / 2 || lat >= Math.PI / 2) {
-            continue;
-        }
-
-        const yOffset = Math.sin(lat) * sphereRadius;
-        const k = Math.cos(lat);
-        const rx = sphereRadius * 1.1 * Math.abs(k);
-        const ry = sphereRadius * 0.55 * Math.abs(k);
-
-        const centerY = cySphere + yOffset;
-        const col = this.ringColor(ringIndex);
-
-        // Background ellipse
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = "rgba(0,0,0,0.65)";
-        this.drawEllipseArc(ctx, cxSphere, centerY, rx, ry, 0, Math.PI * 2);
-
-        // Approximate loops/sec for this ring, use REAL threshold for logic
-        let ringLoopRate = 0;
-        if (this.loopThreshold > 0) {
-            ringLoopRate = loopRate0 / Math.pow(this.loopThreshold, ringIndex);
-        }
-
-        // Hysteresis: latch solid on at 10, release at 4 (on the real state)
-        if (!ring.solid && ringLoopRate >= solidOnThreshold) {
-            ring.solid = true;
-        } else if (ring.solid && ringLoopRate <= solidOffThreshold) {
-            ring.solid = false;
-        }
-        let isSolid = ring.solid;
-
-        // Display progress: blend from snapshot progress -> live progress
-        let displayProgress = ring.progress;
-        if (spendAnim && fromRings && fromRings[ringIndex] && fromRings[ringIndex].exists) {
-            const fromProg = fromRings[ringIndex].progress;
-            displayProgress = fromProg + (ring.progress - fromProg) * spendF;
-            if (fromRings[ringIndex].solid) {
-                isSolid = true;
+            if (lat <= -Math.PI / 2 || lat >= Math.PI / 2) {
+                continue;
             }
-        }
 
-        // Progress arc: solid vs fractional
-        let frac = 0;
-        if (winActive) {
-            frac = 1;
-        } else if (isSolid) {
-            frac = 1;
-        } else {
-            frac = Math.max(0, Math.min(1, displayProgress / displayLoopThreshold));
-        }
+            const yOffset = Math.sin(lat) * sphereRadius;
+            const k = Math.cos(lat);
+            const rx = sphereRadius * 1.1 * Math.abs(k);
+            const ry = sphereRadius * 0.55 * Math.abs(k);
 
-        if (frac > 0) {
-            const start = -Math.PI / 2;
-            const end = start + frac * Math.PI * 2;
+            const centerY = cySphere + yOffset;
+            const col = this.ringColor(ringIndex);
 
-            ctx.lineWidth = 3.2;
-            ctx.strokeStyle = col;
-            ctx.lineCap = "round";
-            this.drawEllipseArc(ctx, cxSphere, centerY, rx, ry, start, end);
-        }
+            // Background ellipse
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = "rgba(0,0,0,0.65)";
+            this.drawEllipseArc(ctx, cxSphere, centerY, rx, ry, 0, Math.PI * 2);
 
-        // Multiplier label for higher rings with nonzero progress
-        // Hide them during or after run-complete so the final sphere is clean.
-        if (!runAnimOrStatic && ringIndex > 0 && displayProgress > 0) {
-            const term = displayMultScale * (displayProgress + 1);
-            const instMult = Math.sqrt(Math.max(0, term));
+            // Approximate loops/sec for this ring, use REAL threshold for logic
+            let ringLoopRate = 0;
+            if (this.loopThreshold > 0) {
+                ringLoopRate = loopRate0 / Math.pow(this.loopThreshold, ringIndex);
+            }
 
-            let displayMult;
+            // Hysteresis: latch solid on at 10, release at 4 (on the real state)
+            if (!ring.solid && ringLoopRate >= solidOnThreshold) {
+                ring.solid = true;
+            } else if (ring.solid && ringLoopRate <= solidOffThreshold) {
+                ring.solid = false;
+            }
+            let isSolid = ring.solid;
 
-            if (!winActive && isSolid && !(spendAnim && fromRings && fromRings[ringIndex])) {
-                if (ring.multAverage == null) {
-                    ring.multAverage = instMult;
-                } else {
-                    ring.multAverage += (instMult - ring.multAverage) * alpha;
+            // Display progress: blend from snapshot progress -> live progress
+            let displayProgress = ring.progress;
+            if (spendAnim && fromRings && fromRings[ringIndex] && fromRings[ringIndex].exists) {
+                const fromProg = fromRings[ringIndex].progress;
+                displayProgress = fromProg + (ring.progress - fromProg) * spendF;
+                if (fromRings[ringIndex].solid) {
+                    isSolid = true;
                 }
-                displayMult = ring.multAverage;
-            } else {
-                ring.multAverage = null;
-                displayMult = instMult;
             }
 
-            const label = `${displayMult.toFixed(2)}x`;
+            // Progress arc: solid vs fractional
+            let frac = 0;
+            if (winActive) {
+                frac = 1;
+            } else if (isSolid) {
+                frac = 1;
+            } else {
+                frac = Math.max(0, Math.min(1, displayProgress / displayLoopThreshold));
+            }
 
-            const thetaTop = -Math.PI / 2;
-            const labelX = cxSphere + rx * Math.cos(thetaTop);
-            const labelY = centerY + ry * Math.sin(thetaTop) - 4;
+            if (frac > 0) {
+                const start = -Math.PI / 2;
+                const end = start + frac * Math.PI * 2;
 
-            ctx.lineWidth = 3;
-            ctx.strokeStyle = col;
-            ctx.strokeText(label, labelX, labelY);
+                ctx.lineWidth = 3.2;
+                ctx.strokeStyle = col;
+                ctx.lineCap = "round";
+                this.drawEllipseArc(ctx, cxSphere, centerY, rx, ry, start, end);
+            }
 
-            ctx.fillStyle = "#000000";
-            ctx.fillText(label, labelX, labelY);
+            // Multiplier label for higher rings with nonzero progress
+            // Hide them during or after run-complete so the final sphere is clean.
+            if (!runAnimOrStatic && ringIndex > 0 && displayProgress > 0) {
+                const term = displayMultScale * (displayProgress + 1);
+                const instMult = Math.sqrt(Math.max(0, term));
+
+                let displayMult;
+
+                if (!winActive && isSolid && !(spendAnim && fromRings && fromRings[ringIndex])) {
+                    if (ring.multAverage == null) {
+                        ring.multAverage = instMult;
+                    } else {
+                        ring.multAverage += (instMult - ring.multAverage) * alpha;
+                    }
+                    displayMult = ring.multAverage;
+                } else {
+                    ring.multAverage = null;
+                    displayMult = instMult;
+                }
+
+                const label = `${displayMult.toFixed(2)}x`;
+
+                const thetaTop = -Math.PI / 2;
+                const labelX = cxSphere + rx * Math.cos(thetaTop);
+                const labelY = centerY + ry * Math.sin(thetaTop) - 4;
+
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = col;
+                ctx.strokeText(label, labelX, labelY);
+
+                ctx.fillStyle = "#000000";
+                ctx.fillText(label, labelX, labelY);
+            }
         }
     }
 
-    this.drawCompletedStageSpheres(ctx, cxBase, cySphereBase, sphereRadiusBase);
+    // Trophies keep their own rotation state; do not freeze them when a run finishes
+    this.drawCompletedStageSpheres(ctx, cxBase, cySphereBase, sphereRadiusBase, true);
+
     this.drawStagesButton(ctx, w, h);     // canvas stages button
 
     // Upgrade buttons anchored to the original sphere position,
@@ -328,7 +337,6 @@ CirclesGame.prototype.draw = function () {
         ctx.fillRect(0, 0, w, h);
 
         // Single expanding pulse ring from the sphere's current position.
-        // Because we use cxSphere / cySphere, the ring follows the sphere as it moves.
         const baseR = Math.min(w, h) * 0.35;
         const p = phase;
         const r = baseR + p * baseR * 1.4;
