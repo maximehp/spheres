@@ -7,7 +7,7 @@ const STAGE_ORBIT_RADIUS_FACTOR = 1.2;     // distance of parked spheres from ce
 const STAGE_SPHERE_RADIUS_FACTOR = 0.18;    // radius of parked spheres relative to main sphere
 
 // Stage points per stage index, 0..8
-const STAGE_POINTS = [1, 1, 1, 2, 2, 2, 2, 3, 0];
+const STAGE_POINTS = [1, 1, 1, 1, 2, 2, 2, 3, 0];
 
 const LOOPS = [12, 10, 6, 40, 18, 7, 12, 4, 100];
 

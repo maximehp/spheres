@@ -1,16 +1,55 @@
 ///////////////////////////////////////////////////////
-// BOOTSTRAP
+// VANTA BACKGROUND PREFERENCE
 ///////////////////////////////////////////////////////
 
-window.addEventListener("DOMContentLoaded", () => {
-    VANTA.WAVES({
+const BG_MOUSE_KEY = "spheres-bg-mouse"; // if you do not already have this
+let vantaEffect = null;
+
+function getBgMouseEnabled() {
+    const stored = localStorage.getItem(BG_MOUSE_KEY);
+    return stored !== "off";
+}
+
+function setBgMouseEnabled(enabled) {
+    localStorage.setItem(BG_MOUSE_KEY, enabled ? "on" : "off");
+}
+
+// Create or recreate Vanta with current preference
+function initVanta() {
+    const bgMouseEnabled = getBgMouseEnabled();
+
+    if (vantaEffect && typeof vantaEffect.destroy === "function") {
+        vantaEffect.destroy();
+        vantaEffect = null;
+    }
+
+    vantaEffect = VANTA.WAVES({
         el: "#background",
         color: 0x020315,
         shininess: 50,
         waveHeight: 25,
         waveSpeed: 0.35,
-        zoom: 1.0
+        zoom: 1.0,
+        mouseControls: bgMouseEnabled,
+        touchControls: bgMouseEnabled,
+        gyroControls: false
     });
+
+    window.vantaEffect = vantaEffect;
+}
+
+///////////////////////////////////////////////////////
+// BOOTSTRAP
+///////////////////////////////////////////////////////
+
+window.addEventListener("DOMContentLoaded", () => {
+    const bgMouseEnabled = getBgMouseEnabled();
+
+    // Initialize VANTA with current preference
+    initVanta();
+
+    // Expose globally if you want to poke it from console
+    window.vantaEffect = vantaEffect;
 
     const canvas = document.getElementById("circlesCanvas");
     const info = document.getElementById("infoBox");
@@ -37,8 +76,7 @@ window.addEventListener("DOMContentLoaded", () => {
         game.startRunCompleteFlash(angle);
     };
 
-    // Win handler: trigger the old final win animation (for now unused
-    // once onRunComplete is wired in, but we keep it as a fallback).
+    // Win handler: trigger the win animation
     game.onWin = function () {
         game.startWinAnimation();
     };
@@ -100,6 +138,22 @@ window.addEventListener("DOMContentLoaded", () => {
             console.error(e);
         }
     });
+
+    ///////////////////////////////////////////////////////
+    // BACKGROUND MOUSE MOVEMENT TOGGLE (ABOUT MODAL)
+    ///////////////////////////////////////////////////////
+
+    const bgMouseToggle = document.getElementById("bgMouseToggle");
+    if (bgMouseToggle) {
+        // sync initial UI with stored preference
+        bgMouseToggle.checked = getBgMouseEnabled();
+
+        bgMouseToggle.addEventListener("change", () => {
+            const enabled = bgMouseToggle.checked;
+            setBgMouseEnabled(enabled);
+            initVanta();   // destroy old effect and recreate with new mouseControls
+        });
+    }
 
     // For console
     window.circlesGame = game;

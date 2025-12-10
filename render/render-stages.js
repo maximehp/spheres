@@ -268,7 +268,7 @@ CirclesGame.prototype.startStage = function (stageIndex) {
 
         case 4:
             // Stage 4: increased cost scaling on all upgrades by 1.5x
-            this.stageSpecialCostScale = 1.5;
+            this.stageSpecialCostScale = 3;
             break;
 
         case 5:
