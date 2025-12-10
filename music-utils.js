@@ -20,26 +20,25 @@ document.addEventListener("DOMContentLoaded", () => {
     let volume = 0;
     let lastVolume = 50;
 
-    // Wait for the SoundCloud widget to be ready
-    widget.bind(SC.Widget.Events.READY, function () {
+    widget.bind(SC.Widget.Events.READY, () => {
         widgetReady = true;
+        // stay muted until the first real gesture
         widget.setVolume(0);
     });
 
     function initMusic() {
+        // Only allow starting audio once the widget is ready
         if (!widgetReady) {
             return;
         }
-
         if (!initialized) {
             initialized = true;
-            widget.play();
+            widget.play();  // this is called directly from a user event
         }
     }
 
     function updateThumbIcon() {
         thumb.textContent = "♫";
-
         if (volume === 0) {
             thumb.classList.add("music-muted");
         } else {
@@ -49,17 +48,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function setVolume(v) {
         volume = Math.max(0, Math.min(100, v));
-
         if (widgetReady) {
             widget.setVolume(volume);
         }
-
         track.style.setProperty("--fillWidth", volume + "%");
-
         if (volume > 0) {
             lastVolume = volume;
         }
-
         updateThumbIcon();
     }
 
@@ -74,7 +69,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function handleBarInteraction(event) {
-        initMusic();
+        initMusic();  // first user drag/tap starts audio
 
         const rect = track.getBoundingClientRect();
         const clientX = getClientXFromEvent(event);
@@ -84,7 +79,7 @@ document.addEventListener("DOMContentLoaded", () => {
         setVolume(newVol);
     }
 
-    // Desktop: click and drag on bar
+    // Desktop: mouse drag
     sliderElem.addEventListener("mousedown", event => {
         if (event.target === thumb) {
             return;
@@ -102,7 +97,7 @@ document.addEventListener("DOMContentLoaded", () => {
         window.addEventListener("mouseup", up);
     });
 
-    // Mobile: touch drag on bar
+    // Mobile: touch drag
     sliderElem.addEventListener("touchstart", event => {
         if (event.target === thumb) {
             return;
@@ -125,31 +120,27 @@ document.addEventListener("DOMContentLoaded", () => {
         window.addEventListener("touchend", up);
     }, { passive: false });
 
-    // Thumb toggles mute / unmute (desktop + mobile via click)
-    thumb.addEventListener("click", event => {
-        event.stopPropagation();
+    // Thumb: mute / unmute
+    function toggleMute() {
         initMusic();
-
         if (volume > 0) {
             setVolume(0);
         } else {
             setVolume(lastVolume);
         }
+    }
+
+    thumb.addEventListener("click", event => {
+        event.stopPropagation();
+        toggleMute();
     });
 
-    // Optional: also respond to touchend directly on the thumb
     thumb.addEventListener("touchend", event => {
         event.stopPropagation();
         event.preventDefault();
-        initMusic();
-
-        if (volume > 0) {
-            setVolume(0);
-        } else {
-            setVolume(lastVolume);
-        }
+        toggleMute();
     });
 
-    // Start muted
+    // Start muted, UI consistent
     setVolume(0);
 });
