@@ -128,12 +128,12 @@ CirclesGame.prototype.handleStageCompletion = function () {
 
 CirclesGame.prototype.getStagePointUpgradeLabel = function (index) {
     switch (index) {
-        case 0: return "x2 speed";
-        case 1: return "threshold -1";
+        case 0: return "x3 speed";
+        case 1: return "threshold -2";
         case 2: return "loops -1";
         case 3: return "min mult";
-        case 4: return "x3 speed";
-        case 5: return "50% cost";
+        case 4: return "x5 speed";
+        case 5: return "-75% cost";
         case 6: return "mult x1.3";
         case 7: return "all +1";
     }
@@ -150,7 +150,7 @@ CirclesGame.prototype.getStagePointUpgradeCost = function (index) {
         case 4: return 2; // x3 speed
         case 5: return 1; // cheap ups
         case 6: return 3; // loop x1.3
-        case 7: return 4; // +1 all
+        case 7: return 3; // +1 all
         default:
             return 1;
     }
@@ -167,13 +167,13 @@ CirclesGame.prototype.getStagePointTooltipInfo = function (index) {
 
     switch (index) {
         case 0:
-            info.title = "x2 speed";
-            info.lines.push("Doubles base progression.");
+            info.title = "x3 speed";
+            info.lines.push("Triples base progression.");
             break;
 
         case 1:
-            info.title = "Threshold -1";
-            info.lines.push("Subtracts 1 from the threshold.");
+            info.title = "Threshold -2";
+            info.lines.push("Subtracts 2 from the threshold.");
             info.lines.push("Can break the cap of 8.");
             break;
 
@@ -190,13 +190,13 @@ CirclesGame.prototype.getStagePointTooltipInfo = function (index) {
             break;
 
         case 4:
-            info.title = "x3 speed";
-            info.lines.push("Triples base progression.");
+            info.title = "x5 speed";
+            info.lines.push("Quintuples base progression.");
             break;
 
         case 5:
-            info.title = "50% Cost";
-            info.lines.push("Halves the cost of regular upgrades.");
+            info.title = "-75% Cost";
+            info.lines.push("Quarters the cost of regular upgrades.");
             break;
 
         case 6:
@@ -286,9 +286,9 @@ CirclesGame.prototype.getUpgradeCost = function (index) {
 
     let cost = Math.floor(baseCosts[index] * Math.pow(growth[index] * scale, level));
 
-    // SP upgrade 5: upgrades 50% cheaper
+    // SP upgrade 5: upgrades 75% cheaper
     if (this.stagePointLevels[5]) {
-        cost = Math.floor(cost * 0.5);
+        cost = Math.floor(cost * 0.25);
         if (cost < 1) {
             cost = 1;
         }
@@ -377,10 +377,10 @@ CirclesGame.prototype.computeBaseRate = function () {
 
         // Stage-point speed boosts still apply
         if (this.stagePointLevels[0]) {
-            factor *= 2;
+            factor *= 3;
         }
         if (this.stagePointLevels[4]) {
-            factor *= 3;
+            factor *= 5;
         }
         return base * factor;
     }
@@ -393,12 +393,12 @@ CirclesGame.prototype.computeBaseRate = function () {
 
     // SP 0: x2 speed
     if (this.stagePointLevels[0]) {
-        factor *= 2;
+        factor *= 3;
     }
 
     // SP 4: x3 speed
     if (this.stagePointLevels[4]) {
-        factor *= 3;
+        factor *= 5;
     }
 
     return base * factor;
@@ -424,13 +424,13 @@ CirclesGame.prototype.computeLoopThreshold = function () {
 
     // SP 1: static -1 after everything, can bring 8 down to 7
     if (this.stagePointLevels[1]) {
-        threshold = Math.max(7, threshold - 1);
+        threshold = Math.max(6, threshold - 2);
     }
 
     // Stage 9 (final stage): enforce minimum threshold 12
     const count = this.stageCount || 9;
     const lastIndex = count - 1;
-    if (this.activeStageIndex === lastIndex && threshold < 50) {
+    if (this.activeStageIndex === lastIndex) {
         threshold = 50;
     }
 
