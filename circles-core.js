@@ -147,6 +147,7 @@ class CirclesGame {
         this.fpsSmoothing = 0.999; // closer to 1 means more smoothing
 
         this.devUnlocked = false;
+        this.devToolsEnabled = false;
 
         // Overall fade for completion animation (1 -> 0.6 while shrinking)
         this.completionAlpha = 1.0;
@@ -1158,39 +1159,44 @@ CirclesGame.prototype.handleKey = function (e) {
         return;
     }
 
-    // Dev tools only available once the player has beaten the game at least once.
-    if (!this.devUnlocked) {
-        return;
-    }
-
-    if (e.key === "ArrowUp") {
-        // Double base speed
-        this.speedScale *= 2;
-
-    } else if (e.key === "ArrowDown") {
-        // Half base speed
-        this.speedScale /= 2;
-
-    } else if (e.key === "Enter") {
-        // Trigger an instant win
-        if (!this.winState.active) {
-            if (typeof this.onWin === "function") {
-                this.onWin();
-            } else {
-                this.startWinAnimation();
-            }
-        }
-
-    } else if (e.key >= "1" && e.key <= "9") {
-        // Number keys 1–9 select stages 1–9 (indices 0–8)
-        const stageNumber = parseInt(e.key, 10);   // "1" -> 1, "9" -> 9
-        const targetIndex = stageNumber - 1;       // 0-based index
+    // Stage shortcuts can be allowed without dev tools, but still require that
+    // the game is in a normal playable state if you want.
+    if (e.key >= "1" && e.key <= "9") {
+        const stageNumber = parseInt(e.key, 10);
+        const targetIndex = stageNumber - 1;
         const count = this.stageCount || 9;
 
         if (targetIndex >= 0 &&
             targetIndex < count &&
             typeof this.startStage === "function") {
             this.startStage(targetIndex);
+        }
+        return;
+    }
+
+    // Dev features only appear after at least one completion
+    if (!this.devUnlocked) {
+        return;
+    }
+
+    // Dev commands require the toggle to be enabled
+    if (!this.devToolsEnabled) {
+        return;
+    }
+
+    if (e.key === "ArrowUp") {
+        this.speedScale *= 2;
+
+    } else if (e.key === "ArrowDown") {
+        this.speedScale /= 2;
+
+    } else if (e.key === "Enter") {
+        if (!this.winState.active) {
+            if (typeof this.onWin === "function") {
+                this.onWin();
+            } else {
+                this.startWinAnimation();
+            }
         }
     }
 };
@@ -1273,6 +1279,9 @@ CirclesGame.prototype.serializeState = function () {
             solid: r.solid
         })),
         devUnlocked: this.devUnlocked,
+        devToolsEnabled: !!this.devToolsEnabled,
+        speedScale: (typeof this.speedScale === "number") ? this.speedScale : 1.0,
+
         stageCompleted: this.stageCompleted.slice(),
         activeStageIndex: this.activeStageIndex,
 
@@ -1302,6 +1311,13 @@ CirclesGame.prototype.applyState = function (s) {
     this.multScale = s.multScale ?? 1.0;
     this.upgradeLevels = s.upgradeLevels ?? [0, 0, 0, 0];
     this.devUnlocked = !!s.devUnlocked;
+
+    this.devToolsEnabled = !!s.devToolsEnabled;
+    this.speedScale = (typeof s.speedScale === "number") ? s.speedScale : 1.0;
+
+    if (!this.devToolsEnabled) {
+        this.speedScale = 1.0;
+    }
 
     // Restore or initialize stages
     this.stageCount = this.stageCount || 9;

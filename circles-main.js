@@ -1,27 +1,71 @@
 ///////////////////////////////////////////////////////
-// VANTA BACKGROUND PREFERENCE
+// VANTA BACKGROUND MODE (Follows Mouse / Static / None)
 ///////////////////////////////////////////////////////
 
-const BG_MOUSE_KEY = "spheres-bg-mouse"; // if you do not already have this
+const BG_MODE_KEY = "spheres-bg-mode";
 let vantaEffect = null;
 
-function getBgMouseEnabled() {
-    const stored = localStorage.getItem(BG_MOUSE_KEY);
-    return stored !== "off";
+const BgMode = {
+    FOLLOWS_MOUSE: "mouse",
+    STATIC: "static",
+    NONE: "none"
+};
+
+function getBgMode() {
+    const stored = localStorage.getItem(BG_MODE_KEY);
+    if (stored === BgMode.FOLLOWS_MOUSE ||
+        stored === BgMode.STATIC ||
+        stored === BgMode.NONE) {
+        return stored;
+    }
+    return BgMode.STATIC;
 }
 
-function setBgMouseEnabled(enabled) {
-    localStorage.setItem(BG_MOUSE_KEY, enabled ? "on" : "off");
+function setBgMode(mode) {
+    localStorage.setItem(BG_MODE_KEY, mode);
 }
 
-// Create or recreate Vanta with current preference
-function initVanta() {
-    const bgMouseEnabled = getBgMouseEnabled();
+function modeLabel(mode) {
+    if (mode === BgMode.FOLLOWS_MOUSE) {
+        return "Background mode: Follows Mouse";
+    }
+    if (mode === BgMode.NONE) {
+        return "Background mode: None";
+    }
+    return "Background mode: Static";
+}
 
+function destroyVanta() {
     if (vantaEffect && typeof vantaEffect.destroy === "function") {
         vantaEffect.destroy();
-        vantaEffect = null;
     }
+    vantaEffect = null;
+}
+
+function applyBgVisibility(mode) {
+    const bg = document.getElementById("background");
+    if (!bg) {
+        return;
+    }
+
+    if (mode === BgMode.NONE) {
+        bg.classList.add("bg-hidden");
+    } else {
+        bg.classList.remove("bg-hidden");
+    }
+}
+
+function initVanta() {
+    const mode = getBgMode();
+
+    destroyVanta();
+    applyBgVisibility(mode);
+
+    if (mode === BgMode.NONE) {
+        return;
+    }
+
+    const mouseEnabled = mode === BgMode.FOLLOWS_MOUSE;
 
     vantaEffect = VANTA.WAVES({
         el: "#background",
@@ -30,62 +74,131 @@ function initVanta() {
         waveHeight: 25,
         waveSpeed: 0.35,
         zoom: 1.0,
-        mouseControls: bgMouseEnabled,
-        touchControls: bgMouseEnabled,
+        mouseControls: mouseEnabled,
+        touchControls: mouseEnabled,
         gyroControls: false
     });
 
     window.vantaEffect = vantaEffect;
 }
 
+function nextBgMode(mode) {
+    if (mode === BgMode.FOLLOWS_MOUSE) {
+        return BgMode.STATIC;
+    }
+    if (mode === BgMode.STATIC) {
+        return BgMode.NONE;
+    }
+    return BgMode.FOLLOWS_MOUSE;
+}
+
 ///////////////////////////////////////////////////////
-// BOOTSTRAP
+// BOOTSTRAP (SINGLE ENTRY POINT)
 ///////////////////////////////////////////////////////
 
 window.addEventListener("DOMContentLoaded", () => {
-    const bgMouseEnabled = getBgMouseEnabled();
-
-    // Initialize VANTA with current preference
     initVanta();
 
-    // Expose globally if you want to poke it from console
-    window.vantaEffect = vantaEffect;
-
     const canvas = document.getElementById("circlesCanvas");
-    const info = document.getElementById("infoBox");
-    const game = new CirclesGame(canvas, info);
+    const infoBox = document.getElementById("infoBox");
 
-    // Try loading from localStorage on start
+    const game = new CirclesGame(canvas, infoBox);
     game.loadLocal();
 
-    // Modal elements
+    /////////////////////////////////////////////////////
+    // DOM ELEMENTS
+    /////////////////////////////////////////////////////
+
     const aboutBtn = document.getElementById("aboutBtn");
     const aboutModal = document.getElementById("aboutModal");
+    const closeAbout = document.getElementById("closeAbout");
     const resetBtn = document.getElementById("resetBtn");
-    const closeBtn = document.getElementById("closeAbout");
 
-    const stagesModal = document.getElementById("stagesModal");
-    const stagesList = document.getElementById("stagesList");
-    const closeStages = document.getElementById("closeStages");
-    const stagesToggleBtn = document.getElementById("stagesToggleBtn");
+    const devToolsRow = document.getElementById("devToolsRow");
+    const devToolsToggle = document.getElementById("devToolsToggle");
+    const devHud = document.getElementById("devHud");
 
-    game.attachStagesUI(stagesModal, stagesList, closeStages, stagesToggleBtn);
+    const bgModeBtn = document.getElementById("bgModeBtn");
 
-    game.onRunComplete = function () {
-        const angle = -Math.PI / 3;  // where this finished sphere should go
-        game.startRunCompleteFlash(angle);
-    };
+    const exportBtn = document.getElementById("exportBtn");
+    const importBtn = document.getElementById("importBtn");
 
-    // Win handler: trigger the win animation
-    game.onWin = function () {
-        game.startWinAnimation();
-    };
+    /////////////////////////////////////////////////////
+    // DEV HUD + TOGGLE
+    /////////////////////////////////////////////////////
+
+    function updateDevHud() {
+        if (!devHud) {
+            return;
+        }
+
+        if (game.devUnlocked && game.devToolsEnabled) {
+            devHud.classList.remove("hidden");
+
+            const scale = typeof game.speedScale === "number"
+                ? game.speedScale
+                : 1.0;
+
+            let label = scale.toFixed(2);
+            if (scale >= 10 || Number.isInteger(scale)) {
+                label = String(scale);
+            }
+
+            devHud.textContent = "DEV SPEED x" + label;
+        } else {
+            devHud.classList.add("hidden");
+            devHud.textContent = "";
+        }
+    }
+
+    function updateDevToolsUI() {
+        if (!devToolsRow || !devToolsToggle) {
+            return;
+        }
+
+        if (game.devUnlocked) {
+            devToolsRow.classList.remove("hidden");
+            devToolsToggle.disabled = false;
+            devToolsToggle.checked = !!game.devToolsEnabled;
+        } else {
+            devToolsRow.classList.add("hidden");
+            devToolsToggle.disabled = true;
+            devToolsToggle.checked = false;
+        }
+
+        updateDevHud();
+    }
+
+    if (devToolsToggle) {
+        devToolsToggle.addEventListener("change", (e) => {
+            e.stopPropagation();
+
+            if (!game.devUnlocked) {
+                devToolsToggle.checked = false;
+                return;
+            }
+
+            game.devToolsEnabled = devToolsToggle.checked;
+
+            if (!game.devToolsEnabled) {
+                game.speedScale = 1.0;
+            }
+
+            game.saveLocal();
+            updateDevToolsUI();
+        });
+    }
+
+    /////////////////////////////////////////////////////
+    // ABOUT MODAL
+    /////////////////////////////////////////////////////
 
     aboutBtn.addEventListener("click", () => {
         aboutModal.classList.remove("hidden");
+        updateDevToolsUI();
     });
 
-    closeBtn.addEventListener("click", () => {
+    closeAbout.addEventListener("click", () => {
         aboutModal.classList.add("hidden");
     });
 
@@ -93,68 +206,73 @@ window.addEventListener("DOMContentLoaded", () => {
         game.resetAll();
         game.saveLocal();
         aboutModal.classList.add("hidden");
+        updateDevToolsUI();
     });
 
-    ///////////////////////////////////////////////////////
-    // IMPORT / EXPORT USING CLIPBOARD
-    ///////////////////////////////////////////////////////
+    /////////////////////////////////////////////////////
+    // IMPORT / EXPORT
+    /////////////////////////////////////////////////////
 
-    const exportBtn = document.getElementById("exportBtn");
-    const importBtn = document.getElementById("importBtn");
+    const PASSWORD = "spheres-secret-1";
 
-    const PASSWORD = "spheres-secret-1"; // same as before
-
-    // EXPORT -> copy encrypted save to clipboard
     exportBtn.addEventListener("click", async () => {
         try {
             const state = game.serializeState();
             const encoded = await encryptState(state, PASSWORD);
-
             await navigator.clipboard.writeText(encoded);
-
             alert("Save copied to clipboard.");
         } catch (e) {
-            alert("Failed to export save.");
             console.error(e);
+            alert("Failed to export save.");
         }
     });
 
-    // IMPORT -> read clipboard text and decode it
     importBtn.addEventListener("click", async () => {
         try {
             const txt = await navigator.clipboard.readText();
             if (!txt.trim()) {
-                alert("Clipboard is empty or contains no save data.");
+                alert("Clipboard is empty.");
                 return;
             }
 
             const decoded = await decryptState(txt.trim(), PASSWORD);
             game.applyState(decoded);
             game.saveLocal();
+            updateDevToolsUI();
 
             alert("Save imported successfully.");
         } catch (e) {
-            alert("Clipboard does not contain valid save data.");
             console.error(e);
+            alert("Invalid save data.");
         }
     });
 
-    ///////////////////////////////////////////////////////
-    // BACKGROUND MOUSE MOVEMENT TOGGLE (ABOUT MODAL)
-    ///////////////////////////////////////////////////////
+    /////////////////////////////////////////////////////
+    // BACKGROUND MODE BUTTON
+    /////////////////////////////////////////////////////
 
-    const bgMouseToggle = document.getElementById("bgMouseToggle");
-    if (bgMouseToggle) {
-        // sync initial UI with stored preference
-        bgMouseToggle.checked = getBgMouseEnabled();
+    if (bgModeBtn) {
+        bgModeBtn.textContent = modeLabel(getBgMode());
 
-        bgMouseToggle.addEventListener("change", () => {
-            const enabled = bgMouseToggle.checked;
-            setBgMouseEnabled(enabled);
-            initVanta();   // destroy old effect and recreate with new mouseControls
+        bgModeBtn.addEventListener("click", () => {
+            const next = nextBgMode(getBgMode());
+            setBgMode(next);
+            bgModeBtn.textContent = modeLabel(next);
+            initVanta();
         });
     }
 
-    // For console
+    /////////////////////////////////////////////////////
+    // KEEP HUD IN SYNC WITH GAME SPEED
+    /////////////////////////////////////////////////////
+
+    const originalUpdate = game.update.bind(game);
+    game.update = function (dt) {
+        originalUpdate(dt);
+        updateDevHud();
+    };
+
+    updateDevToolsUI();
+
     window.circlesGame = game;
 });

@@ -558,7 +558,7 @@ CirclesGame.prototype.getUpgradeTooltipInfo = function (index) {
         const currentScale = computeMultAtLevel(rawLevel);
         const nextScale = computeMultAtLevel(rawLevel + 1);
 
-        info.title = "Multiplier x1.2";
+        info.title = "Multiplier x1.25";
         info.lines.push("Increases speed bonus from higher rings.");
         info.lines.push("");
         info.lines.push(`Current scale : x${currentScale.toFixed(2)}`);

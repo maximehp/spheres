@@ -13,28 +13,31 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
     }
 
+    function isSafariBrowser() {
+        const ua = navigator.userAgent;
+        return ua.includes("Safari") &&
+            !ua.includes("Chrome") &&
+            !ua.includes("Chromium") &&
+            !ua.includes("Edg") &&
+            !ua.includes("Firefox");
+    }
+
+    const autoplayMutedOnReady = isSafariBrowser(); // the one key difference
     const widget = SC.Widget(iframe);
 
     let widgetReady = false;
-    let initialized = false;
+    let playing = false;
+
     let volume = 0;
     let lastVolume = 50;
 
-    widget.bind(SC.Widget.Events.READY, () => {
-        widgetReady = true;
-        // stay muted until the first real gesture
-        widget.setVolume(0);
-    });
+    // If the user interacts before READY, we queue intent and replay on READY.
+    let pendingVolume = null;      // number | null
+    let pendingToggle = false;     // boolean
+    let pendingStart = false;      // boolean
 
-    function initMusic() {
-        // Only allow starting audio once the widget is ready
-        if (!widgetReady) {
-            return;
-        }
-        if (!initialized) {
-            initialized = true;
-            widget.play();  // this is called directly from a user event
-        }
+    function renderFill() {
+        track.style.setProperty("--fillWidth", volume + "%");
     }
 
     function updateThumbIcon() {
@@ -46,19 +49,88 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    function setVolume(v) {
-        volume = Math.max(0, Math.min(100, v));
-        if (widgetReady) {
-            widget.setVolume(volume);
-        }
-        track.style.setProperty("--fillWidth", volume + "%");
+    function clampVolume(v) {
+        return Math.max(0, Math.min(100, v));
+    }
+
+    function setVolumeUI(v) {
+        volume = clampVolume(v);
         if (volume > 0) {
             lastVolume = volume;
         }
+        renderFill();
         updateThumbIcon();
+
+        if (widgetReady && playing) {
+            widget.setVolume(volume);
+        }
     }
 
-    function getClientXFromEvent(event) {
+    function startIfNeeded() {
+        if (!widgetReady) {
+            pendingStart = true;
+            return;
+        }
+        if (playing) {
+            return;
+        }
+
+        playing = true;
+        widget.play();
+
+        // When non-safari starts, do not force lastVolume.
+        // Volume will be applied by whoever called startIfNeeded().
+        // Safari already autoplays on READY.
+    }
+
+    function applyPending() {
+        if (!widgetReady) {
+            return;
+        }
+
+        if (pendingStart) {
+            pendingStart = false;
+            startIfNeeded();
+        }
+
+        if (pendingToggle) {
+            pendingToggle = false;
+            toggleMute();
+            return;
+        }
+
+        if (pendingVolume !== null) {
+            const v = pendingVolume;
+            pendingVolume = null;
+            startIfNeeded();
+            setVolumeUI(v);
+            if (playing) {
+                widget.setVolume(v);
+            }
+        }
+    }
+
+    widget.bind(SC.Widget.Events.READY, () => {
+        widgetReady = true;
+
+        widget.setVolume(0);
+
+        if (autoplayMutedOnReady) {
+            // Safari behavior preserved: muted autoplay on READY
+            widget.play();
+            playing = true;
+        } else {
+            widget.pause();
+            playing = false;
+        }
+
+        updateThumbIcon();
+        renderFill();
+
+        applyPending();
+    });
+
+    function getClientX(event) {
         if (event.touches && event.touches.length > 0) {
             return event.touches[0].clientX;
         }
@@ -68,65 +140,78 @@ document.addEventListener("DOMContentLoaded", () => {
         return event.clientX;
     }
 
-    function handleBarInteraction(event) {
-        initMusic();  // first user drag/tap starts audio
-
+    function volumeFromEvent(event) {
         const rect = track.getBoundingClientRect();
-        const clientX = getClientXFromEvent(event);
-        const x = clientX - rect.left;
-        const pct = Math.max(0, Math.min(1, x / rect.width));
-        const newVol = Math.round(pct * 100);
-        setVolume(newVol);
+        const x = getClientX(event) - rect.left;
+        const width = rect.width > 0 ? rect.width : 1;
+        const pct = Math.max(0, Math.min(1, x / width));
+        return Math.round(pct * 100);
     }
 
-    // Desktop: mouse drag
-    sliderElem.addEventListener("mousedown", event => {
+    function setVolumeFromInteraction(event) {
+        const v = volumeFromEvent(event);
+
+        // Always update UI immediately so the first click never feels "ignored".
+        setVolumeUI(v);
+
+        if (!widgetReady) {
+            pendingStart = true;
+            pendingVolume = v;
+            return;
+        }
+
+        startIfNeeded();
+        setVolumeUI(v);
+        if (playing) {
+            widget.setVolume(v);
+        }
+    }
+
+    // One unified slider implementation via pointer events
+    sliderElem.addEventListener("pointerdown", event => {
         if (event.target === thumb) {
             return;
         }
 
-        handleBarInteraction(event);
+        setVolumeFromInteraction(event);
 
-        const move = ev => handleBarInteraction(ev);
+        const move = ev => setVolumeFromInteraction(ev);
         const up = () => {
-            window.removeEventListener("mousemove", move);
-            window.removeEventListener("mouseup", up);
+            window.removeEventListener("pointermove", move);
+            window.removeEventListener("pointerup", up);
         };
 
-        window.addEventListener("mousemove", move);
-        window.addEventListener("mouseup", up);
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", up);
     });
 
-    // Mobile: touch drag
-    sliderElem.addEventListener("touchstart", event => {
+    sliderElem.addEventListener("click", event => {
         if (event.target === thumb) {
             return;
         }
+        setVolumeFromInteraction(event);
+    });
 
-        event.preventDefault();
-        handleBarInteraction(event);
-
-        const move = ev => {
-            ev.preventDefault();
-            handleBarInteraction(ev);
-        };
-
-        const up = () => {
-            window.removeEventListener("touchmove", move);
-            window.removeEventListener("touchend", up);
-        };
-
-        window.addEventListener("touchmove", move, { passive: false });
-        window.addEventListener("touchend", up);
-    }, { passive: false });
-
-    // Thumb: mute / unmute
     function toggleMute() {
-        initMusic();
+        if (!widgetReady) {
+            pendingStart = true;
+            pendingToggle = true;
+            return;
+        }
+
+        startIfNeeded();
+
         if (volume > 0) {
-            setVolume(0);
+            setVolumeUI(0);
+            if (playing) {
+                widget.setVolume(0);
+            }
         } else {
-            setVolume(lastVolume);
+            const target = lastVolume > 0 ? lastVolume : 50;
+            setVolumeUI(target);
+            if (playing) {
+                widget.setVolume(target);
+            }
         }
     }
 
@@ -139,8 +224,8 @@ document.addEventListener("DOMContentLoaded", () => {
         event.stopPropagation();
         event.preventDefault();
         toggleMute();
-    });
+    }, { passive: false });
 
     // Start muted, UI consistent
-    setVolume(0);
+    setVolumeUI(0);
 });

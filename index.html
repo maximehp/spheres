@@ -18,6 +18,9 @@
                 <div class="music-slider-thumb" id="musicThumb">♫</div>
             </div>
 
+            <!-- Dev HUD -->
+            <div id="devHud" class="dev-hud hidden"></div>
+
             <canvas id="circlesCanvas"></canvas>
 
             <!-- Hidden SoundCloud background music -->
@@ -28,8 +31,8 @@
                 height="200"
                 scrolling="no"
                 frameborder="no"
-                allow="autoplay"
-                src="https://w.soundcloud.com/player/?url=https%3A//soundcloud.com/boo-moo-shoo/my-lofi-collection-1-hour-of-aesthetic-calm-lofi-music-free-no-copyright-music&auto_play=false&hide_related=true&show_comments=false&visual=false&muted=true">
+                allow="autoplay; encrypted-media"
+                src="https://w.soundcloud.com/player/?url=https%3A//soundcloud.com/boo-moo-shoo/my-lofi-collection-1-hour-of-aesthetic-calm-lofi-music-free-no-copyright-music&auto_play=true&hide_related=true&show_comments=false&visual=false">
             </iframe>
         </div>
     </div>
@@ -51,6 +54,7 @@
                 for a college English class.
             </p>
 
+
             <p class="about-music">
                 Background music:
                 <a
@@ -64,12 +68,8 @@
             </p>
 
             <!-- Background mouse movement toggle -->
-            <div class="about-toggle-row">
-                <span class="about-toggle-text">Background reacts to mouse</span>
-                <label class="toggle-switch">
-                    <input type="checkbox" id="bgMouseToggle">
-                    <span class="toggle-slider"></span>
-                </label>
+            <div class="about-buttons-row">
+                <button id="bgModeBtn" class="modal-reset-btn about-btn">Background mode: Static</button>
             </div>
 
             <div class="about-buttons-row">
@@ -80,6 +80,16 @@
             <div class="about-buttons-row">
                 <button id="resetBtn" class="modal-reset-btn about-btn danger">Reset Progress</button>
                 <button id="closeAbout" class="modal-close-btn about-btn primary">Close</button>
+            </div>
+
+            <!-- Dev tools toggle: only visible after beating the game -->
+            <div id="devToolsRow" class="about-toggle-row hidden">
+                <div class="about-toggle-text">Dev tools</div>
+
+                <label class="toggle-switch">
+                    <input id="devToolsToggle" type="checkbox">
+                    <span class="toggle-slider"></span>
+                </label>
             </div>
         </div>
     </div>
