@@ -138,6 +138,12 @@ class CirclesGame {
         // Track the highest ring digit to detect its wrap
         this.lastTopDigit = null;
 
+        // NEW: track highest ring ticks so we only trigger on a real wrap
+        this.lastTopTicks = null;
+
+        // NEW: used to guard completion detection against spending
+        this._totalUnitsBeforeFrame = 0;
+
         // Global speed scale (ArrowUp / ArrowDown)
         this.speedScale = 1.0;
 
@@ -211,6 +217,7 @@ CirclesGame.prototype.resetAll = function () {
     this.winState.active = false;
     this.winState.timer = 0;
     this.lastTopDigit = null;
+    this.lastTopTicks = null;
     this.winPulses = [];
 
     this.trophyOrbitAngle = 0;
@@ -555,6 +562,9 @@ CirclesGame.prototype.loop = function (t) {
 };
 
 CirclesGame.prototype.update = function (dt) {
+    // NEW: capture starting units so completion detection can ignore spending
+    this._totalUnitsBeforeFrame = this.totalUnits;
+
     // Track total playtime only while not in the win screen
     if (!this.winState.active) {
         this.totalPlayTime = (this.totalPlayTime || 0) + dt;
@@ -688,6 +698,7 @@ CirclesGame.prototype.update = function (dt) {
 
         // Reset tracking so threshold changes do not falsely trigger a win.
         this.lastTopDigit = null;
+        this.lastTopTicks = null;
     }
 
     this.multScale = this.computeMultScale();
@@ -793,17 +804,28 @@ CirclesGame.prototype.update = function (dt) {
         }
     }
 
-    // Run completion detection based on the Nth ring completing a loop.
-    if (this.rings.length >= stageSlots) {
+    //////////////////////////////////////////////////////
+    // FIXED: Run completion detection should only trigger
+    // on a real wrap (ticks increase), not "digit became 0".
+    //////////////////////////////////////////////////////
+    if (this.rings.length >= stageSlots && stageSlots > 0) {
         const topRing = this.rings[stageSlots - 1];
-        const digit = topRing.progress;
 
-        if (this.lastTopDigit !== null &&
-            this.lastTopDigit > 0 &&
-            digit === 0 &&
+        const digit = topRing.progress;
+        const topTicks = topRing.ticks;
+
+        const canTrigger =
             !this.winState.active &&
-            !this.runCompleteAnim.active &&
-            !this.completedSphereStatic) {
+            !(this.runCompleteAnim && this.runCompleteAnim.active) &&
+            !this.completedSphereStatic;
+
+        // If units went down (spend), we must not count it as a completion.
+        const unitsIncreasedOrSame = this.totalUnits >= this._totalUnitsBeforeFrame;
+
+        if (canTrigger &&
+            unitsIncreasedOrSame &&
+            this.lastTopTicks !== null &&
+            topTicks > this.lastTopTicks) {
 
             // Stage bookkeeping
             if (typeof this.handleStageCompletion === "function") {
@@ -811,7 +833,7 @@ CirclesGame.prototype.update = function (dt) {
             }
 
             if (isFinalStage) {
-                // Final stage: skip run-complete animation, trigger full win immediately
+                // Final stage: full win
                 this.markGameCompleted();
                 if (typeof this.onWin === "function") {
                     this.onWin();
@@ -819,23 +841,27 @@ CirclesGame.prototype.update = function (dt) {
                     this.startWinAnimation();
                 }
             } else {
-                // Non-final stages: use the run-complete animation if provided
+                // Non-final stages: do NOT fall back into win logic.
+                this.markGameCompleted();
+
                 if (typeof this.onRunComplete === "function") {
                     this.onRunComplete();
+                } else if (typeof this.startRunCompleteFlash === "function") {
+                    this.startRunCompleteFlash();
+                } else if (typeof this.startRunCompleteAnim === "function") {
+                    this.startRunCompleteAnim();
                 } else {
-                    this.markGameCompleted();
-                    if (typeof this.onWin === "function") {
-                        this.onWin();
-                    } else {
-                        this.startWinAnimation();
-                    }
+                    // Hard fallback: park the run so stage picking flow still works.
+                    this.completedSphereStatic = true;
                 }
             }
         }
 
         this.lastTopDigit = digit;
+        this.lastTopTicks = topTicks;
     } else {
         this.lastTopDigit = null;
+        this.lastTopTicks = null;
     }
 
     // Auto-save current state
@@ -1393,6 +1419,10 @@ CirclesGame.prototype.applyState = function (s) {
         this.runCompleteAnim.t = 0;
     }
 
+    // Reset completion tracking after load so we do not trigger immediately
+    this.lastTopDigit = null;
+    this.lastTopTicks = null;
+
     // If we were in the “pick a new stage before playing” state,
     // force the stages modal to be open again.
     if (this.requireStageChange && typeof this.showStagesModal === "function") {
@@ -1427,4 +1457,3 @@ CirclesGame.prototype.loadLocal = function () {
         return false;
     }
 };
-
