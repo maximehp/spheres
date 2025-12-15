@@ -18,7 +18,7 @@ function getBgMode() {
         stored === BgMode.NONE) {
         return stored;
     }
-    return BgMode.STATIC;
+    return BgMode.FOLLOWS_MOUSE;
 }
 
 function setBgMode(mode) {
